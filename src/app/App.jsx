@@ -1,7 +1,58 @@
+// src/app/App.jsx
+import { Routes, Route, Navigate } from "react-router-dom";
+
+import SignIn from "@/features/auth/SignIn.jsx";
+import SignUp from "@/features/auth/SignUp.jsx";
+import ResetPassword from "@/features/auth/ResetPassword.jsx";
+import Dashboard from "@/pages/Dashboard.jsx";
+
+import ProtectedRoute from "@/features/auth/ProtectedRoute.jsx";
+import AnonOnly from "@/features/auth/AnonOnly.jsx";
+
 export default function App() {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-100">
-      <h1 className="text-3xl font-bold">🚀 Ranko App avec Vite + React + Tailwind</h1>
-    </main>
-  )
+    <Routes>
+      {/* Redirige la racine vers le dashboard */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+      {/* Pages d'auth visibles seulement si NON connecté */}
+      <Route
+        path="/signin"
+        element={
+          <AnonOnly>
+            <SignIn />
+          </AnonOnly>
+        }
+      />
+      <Route
+        path="/signup"
+        element={
+          <AnonOnly>
+            <SignUp />
+          </AnonOnly>
+        }
+      />
+      <Route
+        path="/reset"
+        element={
+          <AnonOnly>
+            <ResetPassword />
+          </AnonOnly>
+        }
+      />
+
+      {/* Pages protégées (connexion requise) */}
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Fallback */}
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
 }
