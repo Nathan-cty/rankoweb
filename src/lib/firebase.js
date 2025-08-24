@@ -15,6 +15,10 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
+if (import.meta.env.DEV) {
+  console.log("Storage bucket →", import.meta.env.VITE_FIREBASE_STORAGE_BUCKET);
+}
+
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app); // ⬅️ export
+export const storage = getStorage(app);

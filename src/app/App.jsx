@@ -5,6 +5,7 @@ import SignIn from "@/features/auth/SignIn.jsx";
 import SignUp from "@/features/auth/SignUp.jsx";
 import ResetPassword from "@/features/auth/ResetPassword.jsx";
 import Dashboard from "@/pages/Dashboard.jsx";
+import RankingDetail from "@/pages/RankingDetail.jsx";
 
 import ProtectedRoute from "@/features/auth/ProtectedRoute.jsx";
 import AnonOnly from "@/features/auth/AnonOnly.jsx";
@@ -39,6 +40,9 @@ export default function App() {
             <ResetPassword />
           </AnonOnly>
         }
+      />
+      <Route
+      path="/rankings/:id" element={<RankingDetail/>}
       />
 
       {/* Pages protégées (connexion requise) */}
