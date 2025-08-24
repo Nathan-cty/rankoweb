@@ -6,6 +6,7 @@ import { useAuth } from "@/features/auth/AuthProvider.jsx";
 import ProfileHeader from "@/features/profile/ProfileHeader";
 import CreateRankingModal from "@/features/rankings/CreateRankingModal";
 import RankingCard from "@/features/rankings/RankingCard";
+import { Link } from "react-router-dom";
 
 export default function Dashboard() {
   const { user, loading: authLoading } = useAuth(); // ← utilisateur réactif
@@ -36,7 +37,7 @@ export default function Dashboard() {
     return () => unsub();
   }, [q]);
 
-  const handleCreated = (r) => {
+  const handleCreated = () => {
     
   };
 
@@ -71,8 +72,9 @@ export default function Dashboard() {
               </div>
             </div>
           ) : (
+            <>
             <div className="grid grid-cols-1 gap-3">
-              {rankings.map((r) => (
+                {rankings.slice(0, 3).map((r) => (
                 <RankingCard
                   key={r.id}
                   ranking={r}
@@ -80,6 +82,18 @@ export default function Dashboard() {
                 />
               ))}
             </div>
+
+            {rankings.length > 3 && (
+              <div className="mt-4 flex justify-center">
+              <Link
+                to="/rankings"
+                className="btn-brand text-sm font-medium px-6 py-2 rounded-full w-56 text-center"
+              >
+                Afficher tous les classements
+                </Link>
+              </div>
+            )}
+            </>
           )}
         </section>
       </div>

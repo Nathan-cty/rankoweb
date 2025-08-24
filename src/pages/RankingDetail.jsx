@@ -1,6 +1,7 @@
 // src/pages/RankingDetail.jsx
 import { useParams } from "react-router-dom";
 import { useState } from "react";
+import BackButton from "@/components/BackButton.jsx";
 
 export default function RankingDetail() {
   const { id } = useParams();
@@ -13,8 +14,9 @@ export default function RankingDetail() {
   return (
     <main className="min-h-screen bg-background text-textc flex">
       <div className="mx-auto w-full max-w-sm flex-1 p-4">
-        <section className="rounded-2xl bg-background-card shadow border border-borderc p-4">
-          {/* Image 190x190 */}
+        <section className=" relative rounded-2xl bg-background-card shadow border border-borderc p-4">
+          <BackButton className="absolute top-3 left-3" />
+        
           <div className="w-full flex justify-center">
             <div className="h-[190px] w-[190px] rounded-xl overflow-hidden border border-borderc bg-background-soft">
               {coverUrl ? (
