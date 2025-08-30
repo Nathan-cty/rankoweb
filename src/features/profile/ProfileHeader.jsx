@@ -6,10 +6,13 @@ import Avatar from "./Avatar.jsx";
 import EditProfileModal from "./EditProfileModal.jsx"; // ← modale unifiée
 import { LogOut, Heart } from "lucide-react";
 import { listenUserProfile } from "@/features/profile/profileApi"; // ← pour la bio temps réel
+import { useNavigate } from "react-router-dom";
+
 
 export default function ProfileHeader({ onCreateClick }) {
   const auth = getAuth();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const initialDisplay = user?.displayName || user?.email || "Utilisateur";
   const initialPhoto = user?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(initialDisplay)}&background=4f46e5&color=fff`;
@@ -53,12 +56,12 @@ export default function ProfileHeader({ onCreateClick }) {
       </div>
       <div className="absolute top-3 right-3">
         <button
-          onClick={() => {}}
-          className="p-2 rounded-full hover:bg-background-soft"
-          aria-label="Favori"
-        >
-          <Heart size={22} className="text-brand hover:text-brand-light" />
-        </button>
+  onClick={() => navigate("/favorites")}
+  className="p-2 rounded-full hover:bg-background-soft"
+  aria-label="Favoris"
+>
+  <Heart size={22} className="text-brand hover:text-brand-light" />
+</button>
       </div>
 
       {/* Contenu centré */}

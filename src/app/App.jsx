@@ -10,6 +10,8 @@ import Rankings from "@/pages/Rankings.jsx";
 
 import ProtectedRoute from "@/features/auth/ProtectedRoute.jsx";
 import AnonOnly from "@/features/auth/AnonOnly.jsx";
+import MangaDetail from "@/pages/MangaDetails";
+import Favorites from "@/pages/Favorites.jsx";
 
 export default function App() {
   return (
@@ -53,6 +55,25 @@ export default function App() {
         <Rankings/>
         </ProtectedRoute>
       } />
+
+      <Route
+      path="/manga/:id"
+      element={
+        <ProtectedRoute>
+          <MangaDetail/>
+        </ProtectedRoute>
+      }
+      />
+
+      <Route
+  path="/favorites"
+  element={
+    <ProtectedRoute>
+      <Favorites />
+    </ProtectedRoute>
+  }
+/>
+      
 
       {/* Pages protégées (connexion requise) */}
       <Route

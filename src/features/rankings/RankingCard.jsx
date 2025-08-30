@@ -9,7 +9,7 @@ export default function RankingCard({ ranking }) {
     >
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{ranking.title}</h3>
-        <span className="text-xs muted">{ranking.itemsCount ?? 0} items</span>
+        <span className="text-xs muted">{ranking.itemsCount ?? 0} oeuvre(s)</span>
       </div>
       <p className="muted text-sm mt-1">Créé récemment</p>
     </Link>

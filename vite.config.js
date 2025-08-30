@@ -13,4 +13,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  server: {
+    host: true,          // écoute sur toutes les interfaces
+    port: 5173,
+    strictPort: true,
+  },
 })
