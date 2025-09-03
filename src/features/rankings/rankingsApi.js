@@ -7,15 +7,17 @@ import {
   getDocs,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
-  writeBatch,
-  increment
 } from "firebase/firestore";
 
-
+/**
+ * Crée un classement vide pour l'utilisateur connecté.
+ */
 export async function createRanking({ title, visibility = "public" }) {
   const user = auth.currentUser;
   if (!user) throw new Error("Utilisateur non authentifié.");
+
   const ref = await addDoc(collection(db, "rankings"), {
     ownerUid: user.uid,
     title: String(title || "").trim(),
@@ -24,85 +26,139 @@ export async function createRanking({ title, visibility = "public" }) {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
   return ref.id;
 }
 
-// Récupère les mangaIds déjà présents dans un ranking
+/**
+ * Récupère les IDs (mangaId) déjà présents dans un ranking (triés par position ASC).
+ */
 export async function getRankingItemIds(rankingId) {
-  const q = query(collection(db, "rankings", rankingId, "items"), orderBy("position", "asc"));
+  const q = query(
+    collection(db, "rankings", rankingId, "items"),
+    orderBy("position", "asc")
+  );
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.id);
 }
 
-// Ajoute une liste d'items [{mangaId, position, note?}]
-export async function addRankingItems(rankingId, items = [], currentCount = 0) {
+/**
+ * Ajoute une liste d'items [{mangaId, title?, author?, coverUrl?}] au classement
+ * et met à jour itemsCount dans la même transaction.
+ *
+ * - Évite les doublons (si un doc items/{mangaId} existe déjà, il est ignoré)
+ * - Positionne chaque nouvel item à partir de itemsCount + 1
+ * - Retourne le nouveau total réel après ajout
+ */
+export async function addRankingItems(rankingId, items = []) {
   const user = auth.currentUser;
   if (!user) throw new Error("Utilisateur non authentifié.");
-  if (!rankingId || !Array.isArray(items)) throw new Error("Payload invalide.");
-
-  const batch = writeBatch(db);
-  let pos = currentCount;
-
-  for (const it of items) {
-    const mangaId = it.mangaId;
-    if (!mangaId) continue;
-    pos += 1;
-
-    const itemRef = doc(db, "rankings", rankingId, "items", mangaId);
-    batch.set(itemRef, {
-      mangaId,
-      rankingId,
-      ownerUid: user.uid,
-      position: pos,
-      note: it.note || "",
-      createdAt: serverTimestamp(),
-    });
+  if (!rankingId || !Array.isArray(items) || items.length === 0) {
+    throw new Error("Payload invalide.");
   }
 
-  // MAJ compteur parent
-  const parentRef = doc(db, "rankings", rankingId);
-  batch.set(parentRef, { itemsCount: pos, updatedAt: serverTimestamp() }, { merge: true });
+  const rankingRef = doc(db, "rankings", rankingId);
+  const itemsCol = collection(rankingRef, "items");
 
-  await batch.commit();
-  return pos; // nouveau total
+  const newTotal = await runTransaction(db, async (tx) => {
+    const rankingSnap = await tx.get(rankingRef);
+    if (!rankingSnap.exists()) throw new Error("Classement introuvable.");
+
+    let base = Number(rankingSnap.data()?.itemsCount || 0);
+    let added = 0;
+
+    for (const input of items) {
+      const mangaId = input?.mangaId;
+      if (!mangaId) continue;
+
+      const itemRef = doc(itemsCol, mangaId);
+      const exists = (await tx.get(itemRef)).exists();
+
+      if (exists) continue; // on ignore les doublons
+
+      added += 1;
+      tx.set(
+        itemRef,
+        {
+          mangaId,
+          title: input.title || "",
+          author: input.author || "",
+          coverUrl: input.coverUrl || "",
+          position: base + added, // positions consécutives
+          addedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+
+    if (added > 0) {
+      tx.update(rankingRef, {
+        itemsCount: base + added,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    return base + added;
+  });
+
+  return newTotal;
 }
 
+/**
+ * Supprime un item (mangaId) et décrémente le compteur dans la même transaction.
+ * Recompacte le compteur (min 0). Ne touche pas aux positions des autres items.
+ */
 export async function deleteRankingItem(rankingId, mangaId) {
   const user = auth.currentUser;
   if (!user) throw new Error("Utilisateur non authentifié.");
   if (!rankingId || !mangaId) throw new Error("Paramètres invalides.");
 
-  const batch = writeBatch(db);
-
-  // supprime l'item
+  const rankingRef = doc(db, "rankings", rankingId);
   const itemRef = doc(db, "rankings", rankingId, "items", mangaId);
-  batch.delete(itemRef);
 
-  // décrémente le compteur du parent
-  const parentRef = doc(db, "rankings", rankingId);
-  batch.set(
-    parentRef,
-    { itemsCount: increment(-1), updatedAt: serverTimestamp() },
-    { merge: true }
-  );
+  await runTransaction(db, async (tx) => {
+    const parentSnap = await tx.get(rankingRef);
+    if (!parentSnap.exists()) throw new Error("Classement introuvable.");
 
-  await batch.commit();
+    const itemSnap = await tx.get(itemRef);
+    if (!itemSnap.exists()) return; // rien à faire
+
+    tx.delete(itemRef);
+
+    const base = Number(parentSnap.data()?.itemsCount || 0);
+    const next = Math.max(0, base - 1);
+
+    tx.update(rankingRef, {
+      itemsCount: next,
+      updatedAt: serverTimestamp(),
+    });
+  });
 }
 
-export async function reorderRankingItems(rankingId, orderedMangaIds = []) {
+/**
+ * Réordonne la liste (ne change pas itemsCount).
+ * @param {string} rankingId
+ * @param {string[]} orderedIds - ordre complet des IDs (mangaId)
+ */
+export async function reorderRankingItems(rankingId, orderedIds = []) {
   const user = auth.currentUser;
   if (!user) throw new Error("Utilisateur non authentifié.");
-  if (!rankingId || !Array.isArray(orderedMangaIds)) {
+  if (!rankingId || !Array.isArray(orderedIds) || orderedIds.length === 0) {
     throw new Error("Paramètres invalides.");
   }
 
-  const batch = writeBatch(db);
-  orderedMangaIds.forEach((mangaId, idx) => {
-    const ref = doc(db, "rankings", rankingId, "items", mangaId);
-    batch.set(ref, { position: idx + 1, updatedAt: serverTimestamp() }, { merge: true });
-  });
-  // MAJ parent.updatedAt (optionnel)
-  batch.set(doc(db, "rankings", rankingId), { updatedAt: serverTimestamp() }, { merge: true });
+  const rankingRef = doc(db, "rankings", rankingId);
 
-  await batch.commit();
+  await runTransaction(db, async (tx) => {
+    const parentSnap = await tx.get(rankingRef);
+    if (!parentSnap.exists()) throw new Error("Classement introuvable.");
+
+    orderedIds.forEach((mangaId, idx) => {
+      const itemRef = doc(db, "rankings", rankingId, "items", mangaId);
+      // on ne crée pas si absent; on update seulement s'il existe
+      tx.update(itemRef, { position: idx + 1 });
+    });
+
+    tx.update(rankingRef, { updatedAt: serverTimestamp() });
+  });
 }

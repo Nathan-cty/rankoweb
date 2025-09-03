@@ -4,8 +4,11 @@ import SearchInput from "@/components/SearchInput";
 import { MANGA_SAMPLE } from "@/data/manga.sample";
 import { addRankingItems, getRankingItemIds } from "./rankingsApi";
 import { Plus } from "lucide-react";
+import useLockBodyScroll from "@/hooks/useLockBodyScroll";
 
 export default function AddMangaModal({ rankingId, initialCount = 0, onClose, onAdded }) {
+  useLockBodyScroll(true); // 🔒 bloque le scroll de la page
+
   const [query, setQuery] = useState("");
   const [existingIds, setExistingIds] = useState(new Set());
   const [err, setErr] = useState("");
@@ -29,10 +32,7 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
     return MANGA_SAMPLE.filter((m) => {
       if (existingIds.has(m.id)) return false;
       if (!q) return true;
-      return (
-        m.title.toLowerCase().includes(q) ||
-        m.author.toLowerCase().includes(q)
-      );
+      return m.title.toLowerCase().includes(q) || m.author.toLowerCase().includes(q);
     });
   }, [query, existingIds]);
 
@@ -54,34 +54,34 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end sm:place-items-center">
-      {/* backdrop */}
+    <div
+      className="fixed inset-0 z-50 grid place-items-end sm:place-items-center overflow-hidden overscroll-contain"
+      aria-modal="true"
+      role="dialog"
+    >
+      {/* backdrop (bloque les interactions derrière) */}
       <button
         className="absolute inset-0 bg-black/50"
         onClick={onClose}
         aria-label="Fermer"
       />
+
       {/* feuille / card */}
       <div
         className="relative z-10 w-full max-w-md rounded-t-2xl sm:rounded-2xl bg-background-card border border-borderc shadow-2xl p-4 flex flex-col"
         style={{ minHeight: "70vh", maxHeight: "85vh" }}
       >
         {/* header */}
-        <div className="mb-3 flex items-center justify-between">
-          {/* X à gauche */}
+        <div className="mb-3 grid grid-cols-[32px_1fr_32px] items-center">
           <button
             onClick={onClose}
-            className="rounded-full p-2 hover:bg-background-soft"
+            className="rounded-full p-2 hover:bg-background-soft justify-self-start"
             aria-label="Fermer"
           >
             ✕
           </button>
-          {/* titre centré */}
-          <h3 className="text-lg font-semibold flex-1 text-center">
-            Ajouter des mangas
-          </h3>
-          {/* espace vide pour équilibrer */}
-          <div className="w-8" />
+          <h3 className="text-lg font-semibold text-center">Ajouter des mangas</h3>
+          <div /> {/* spacer */}
         </div>
 
         <SearchInput
@@ -96,7 +96,8 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
           </p>
         )}
 
-        <div className="mt-3 flex-1 overflow-auto divide-y divide-borderc/40">
+        {/* zone scrollable interne uniquement */}
+        <div className="mt-3 flex-1 overflow-auto overscroll-contain divide-y divide-borderc/40">
           {results.length === 0 ? (
             <div className="h-full grid place-items-center text-sm text-textc-muted">
               Aucun résultat

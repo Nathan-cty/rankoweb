@@ -1,8 +1,8 @@
 // src/features/profile/EditProfileModal.jsx
 import { useEffect, useRef, useState } from "react";
-import useAvatarUpload from "./useAvatarUpload"; // ton hook existant
+import useAvatarUpload from "./useAvatarUpload";
 import { updateUserProfile } from "./profileApi";
-import { X, Pencil } from "lucide-react";
+import { X, Pencil, Loader2 } from "lucide-react";
 
 const MAX_BIO = 140;
 
@@ -16,7 +16,6 @@ export default function EditProfileModal({ user, initialBio = "", onClose, onSav
   const { preview, saving: savingAvatar, choose, save, setFile } = useAvatarUpload(user);
   const fileInputRef = useRef(null);
   const currentPhoto = user?.photoURL || "";
-
   const displaySrc = preview || currentPhoto || "";
 
   useEffect(() => {
@@ -24,6 +23,7 @@ export default function EditProfileModal({ user, initialBio = "", onClose, onSav
   }, [initialBio]);
 
   const pickFile = () => fileInputRef.current?.click();
+
   const onChangeFile = (e) => {
     setErr("");
     try {
@@ -44,20 +44,18 @@ export default function EditProfileModal({ user, initialBio = "", onClose, onSav
     setErr("");
     setSaving(true);
     try {
-      // 1) si une nouvelle image a été choisie, on l’upload et on récupère l’URL
+      // 1) upload éventuel de la nouvelle image
       let photoURL = null;
       if (preview) {
-        photoURL = await save(); // ton hook fait uploadBytes + getDownloadURL (+ updateProfile si tu l'avais)
+        photoURL = await save();
       }
-
-      // 2) on met à jour Auth + Firestore
+      // 2) mise à jour Auth + Firestore
       const res = await updateUserProfile({
         displayName: displayName.trim(),
         bio,
         photoURL: photoURL || undefined,
       });
-
-      onSaved?.(res); // remonte les nouvelles valeurs au parent si besoin
+      onSaved?.(res);
       onClose?.();
     } catch (error) {
       console.error(error);
@@ -69,6 +67,7 @@ export default function EditProfileModal({ user, initialBio = "", onClose, onSav
 
   const len = bio.trim().length;
   const over = len > MAX_BIO;
+  const isBusy = saving || savingAvatar;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-end sm:place-items-center">
@@ -76,6 +75,7 @@ export default function EditProfileModal({ user, initialBio = "", onClose, onSav
       <button className="absolute inset-0 bg-black/50" onClick={onClose} aria-label="Fermer" />
       {/* sheet */}
       <div className="relative z-10 w-full max-w-md rounded-t-2xl border border-borderc bg-background-card p-4 shadow-2xl sm:rounded-2xl">
+        {/* Header */}
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-lg font-semibold">Modifier le profil</h3>
           <button onClick={onClose} className="rounded-full p-2 hover:bg-background-soft" aria-label="Fermer">
@@ -90,30 +90,34 @@ export default function EditProfileModal({ user, initialBio = "", onClose, onSav
         )}
 
         <form onSubmit={onSubmit} className="space-y-4">
-          {/* Avatar + bouton crayon */}
+          {/* Avatar cliquable + crayon */}
           <div className="flex items-center gap-4">
-            <div className="relative h-20 w-20 overflow-hidden rounded-full border border-borderc">
+            <button
+              type="button"
+              onClick={pickFile}
+              className="relative h-20 w-20 overflow-hidden rounded-full border border-borderc focus:outline-none focus:ring-2 focus:ring-brand/50 cursor-pointer"
+              aria-label="Changer la photo"
+            >
               {displaySrc ? (
                 <img src={displaySrc} alt="Avatar" className="h-full w-full object-cover" />
               ) : (
-                <div className="grid h-full w-full place-items-center text-xs text-textc-muted">Aucune photo</div>
+                <div className="grid h-full w-full place-items-center text-xs text-textc-muted">
+                  Aucune photo
+                </div>
               )}
-              <button
-                type="button"
-                onClick={pickFile}
-                className="absolute bottom-1 right-1 rounded-full bg-background-soft p-1 hover:bg-background"
-                aria-label="Changer la photo"
-              >
+              {/* Icône crayon (clic OK aussi) */}
+              <span className="absolute bottom-1 right-1 rounded-full bg-background-soft p-1 ring-1 ring-borderc">
                 <Pencil size={14} className="text-brand" />
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={onChangeFile}
-                className="hidden"
-              />
-            </div>
+              </span>
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={onChangeFile}
+              className="hidden"
+            />
 
             <div className="flex-1">
               <label className="mb-1 block text-sm">Nom d’utilisateur</label>
@@ -136,21 +140,27 @@ export default function EditProfileModal({ user, initialBio = "", onClose, onSav
               onChange={(e) => setBio(e.target.value)}
               className="w-full resize-none rounded-lg bg-background-soft border border-borderc px-3 py-2 outline-none focus:border-brand"
               placeholder="Parle de tes goûts (140 caractères max)…"
-              maxLength={MAX_BIO + 20} /* tolérance saisie, validée à la soumission */
+              maxLength={MAX_BIO + 20}
             />
             <div className="mt-1 text-right text-xs">
-              <span className={over ? "text-red-400" : "text-textc-muted"}>{len}/{MAX_BIO}</span>
+              <span className={over ? "text-red-400" : "text-textc-muted"}>
+                {len}/{MAX_BIO}
+              </span>
             </div>
           </div>
 
+          {/* Actions */}
           <div className="flex justify-end gap-2">
-            <button type="button" className="btn-ghost" onClick={onClose}>Annuler</button>
+            <button type="button" className="btn-ghost" onClick={onClose} disabled={isBusy}>
+              Annuler
+            </button>
             <button
               type="submit"
-              disabled={saving || savingAvatar || over}
-              className="btn-brand"
+              disabled={isBusy || over}
+              className="btn-brand inline-flex items-center justify-center min-w-[44px] h-9"
+              aria-busy={isBusy}
             >
-              {saving || savingAvatar ? "Enregistrement…" : "Valider"}
+              {isBusy ? <Loader2 size={16} className="animate-spin" /> : "Valider"}
             </button>
           </div>
         </form>
