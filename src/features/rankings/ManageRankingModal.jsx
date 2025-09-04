@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { deleteRankingItem, reorderRankingItems } from "./rankingsApi";
+import uselockBodyScroll from "@/hooks/useLockBodyScroll";
 
 import {
   DndContext,
@@ -116,6 +117,7 @@ function Row({ item, index, onRemove }) {
 /* ---------------- Modal ---------------- */
 
 export default function ManageRankingModal({ rankingId, onClose }) {
+  uselockBodyScroll(true);
   const [items, setItems] = useState([]); // [{id, position, ...}]
   const [err, setErr] = useState("");
   const [savingId, setSavingId] = useState(null);
@@ -190,7 +192,7 @@ export default function ManageRankingModal({ rankingId, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end sm:place-items-center">
+    <div className="fixed inset-0 z-50 grid place-items-end sm:place-items-center overscroll-contain">
       {/* backdrop */}
       <button
         className="absolute inset-0 bg-black/50"
@@ -223,7 +225,7 @@ export default function ManageRankingModal({ rankingId, onClose }) {
           </p>
         )}
 
-        <div className="flex-1 overflow-auto relative">
+        <div className="flex-1 overflow-auto overscroll-contain relative">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}

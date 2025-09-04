@@ -22,6 +22,7 @@ export default function Dashboard() {
     );
   }, [user]);
 
+
   useEffect(() => {
     if (!q) return;
     const unsub = onSnapshot(
@@ -40,6 +41,8 @@ export default function Dashboard() {
   const handleCreated = () => {
     
   };
+
+
 
   // État de chargement pendant l’hydratation de la session
   if (authLoading || (!user && rankings.length === 0)) {
