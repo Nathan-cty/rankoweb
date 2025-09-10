@@ -20,3 +20,5 @@
     @apply bg-background-card border border-borderc rounded-2xl shadow p-4;
   }
 }
+
+* { -webkit-tap-highlight-color: transparent; }
