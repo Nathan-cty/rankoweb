@@ -7,11 +7,6 @@ runConfig:
   memoryMiB: 512
 
 env:
-  # Environnement de build
-  - variable: NODE_ENV
-    value: production
-    availability:
-      - BUILD
 
   # Clés du SDK Web Firebase (⚠️ PAS des clés privées Admin !)
   - variable: VITE_FIREBASE_API_KEY
@@ -44,3 +39,7 @@ env:
     availability:
       - BUILD
 
+ # Environnement de build
+  - variable: NODE_ENV
+    value: production
+    availability: [RUNTIME]
