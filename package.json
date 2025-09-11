@@ -8,15 +8,18 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "vite preview --port $PORT --host 0.0.0.0"
+    "start": "node server.js"
   },
-
-  
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "compression": "^1.8.1",
+    "express": "^5.1.0",
     "firebase": "^12.1.0",
     "lucide-react": "^0.540.0",
     "path": "^0.12.7",
