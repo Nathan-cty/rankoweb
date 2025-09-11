@@ -1,7 +1,7 @@
 # Configuration App Hosting pour un projet Vite + Firebase
 
 runConfig:
-  minInstances: 0
+  minInstances: 1       # ← pour éviter un cold start pendant tes tests
   maxInstances: 20
   cpu: 1
   memoryMiB: 512

@@ -1,4 +1,4 @@
-// server.js (ESM, Express 5 compatible)
+// server.js (ESM, Express 5)
 import express from "express";
 import compression from "compression";
 import path from "node:path";
@@ -15,7 +15,9 @@ const app = express();
 app.disable("x-powered-by");
 app.use(compression());
 
-// --- logs de démarrage utiles ---
+// Logs démarrage + SAN check
+console.log("🔎 CWD:", process.cwd());
+console.log("🔎 PORT:", process.env.PORT);
 try {
   if (!fs.existsSync(distDir)) {
     console.error("❌ dist/ introuvable. Lance `npm run build`.");
@@ -27,10 +29,10 @@ try {
   console.error("❌ Erreur en lisant dist/:", e);
 }
 
-// Fichiers statiques du build
+// Fichiers statiques
 app.use(
   express.static(distDir, {
-    index: false,      // on gère index.html nous-mêmes
+    index: false,
     fallthrough: true,
     setHeaders: (res, filePath) => {
       if (/\.[a-f0-9]{8,}\.(js|css|png|jpg|jpeg|webp|avif|svg|gif|woff2)$/.test(filePath)) {
@@ -42,15 +44,14 @@ app.use(
   })
 );
 
-// ✅ Fallback SPA uniquement pour les routes SANS extension (RegExp, pas "*")
-app.get(/^(?!.*\.[^/]+$).*/, (req, res) => {
-  // (optionnel) exclure une API côté serveur : if (req.path.startsWith("/api")) return res.status(404).end();
+// Fallback SPA : uniquement si la route n'a PAS d'extension
+app.get(/^(?!.*\.[^/]+$).*/, (_req, res) => {
   if (!fs.existsSync(indexHtml)) return res.status(500).send("index.html manquant");
   res.sendFile(indexHtml);
 });
 
-// 404 pour le reste (p.ex. asset vraiment manquant)
-app.use((req, res) => res.status(404).send("Not found"));
+// 404 pour le reste
+app.use((_req, res) => res.status(404).send("Not found"));
 
 const port = process.env.PORT || 8080;
 app.listen(port, "0.0.0.0", () => {
