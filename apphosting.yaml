@@ -38,7 +38,9 @@ env:
     value: 1:185493898227:web:0a105d36982e3bab560886
     availability:
       - BUILD
-
+  - variable: NPM_CONFIG_PRODUCTION
+    value: "false"
+    availability: [BUILD]
  # Environnement de build
   - variable: NODE_ENV
     value: production
