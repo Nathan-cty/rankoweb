@@ -1,10 +1,11 @@
 # Configuration App Hosting pour un projet Vite + Firebase
 
 runConfig:
-  minInstances: 1       # ← pour éviter un cold start pendant tes tests
-  maxInstances: 20
-  cpu: 1
-  memoryMiB: 512
+  minInstances: 2
+  maxInstances: 100
+  concurrency: 100
+  cpu: 2
+  memoryMiB: 1024
 
 env:
 
@@ -28,6 +29,7 @@ env:
     value: ranko-2ad7a.firebasestorage.app
     availability:
       - BUILD
+      - RUNTIME
 
   - variable: VITE_FIREBASE_MESSAGING_SENDER_ID
     value: 185493898227
