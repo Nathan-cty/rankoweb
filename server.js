@@ -1,4 +1,4 @@
-// server.js (ESM, Express 5)
+// server.js (ESM, Express 5) — hardened
 import express from "express";
 import compression from "compression";
 import path from "node:path";
@@ -15,12 +15,13 @@ const app = express();
 app.disable("x-powered-by");
 app.use(compression());
 
-// Logs démarrage + SAN check
+// --- BOOT LOGS ---
 console.log("🔎 CWD:", process.cwd());
-console.log("🔎 PORT:", process.env.PORT);
+console.log("🔎 NODE_ENV:", process.env.NODE_ENV);
+console.log("🔎 PORT (env):", process.env.PORT);
 try {
   if (!fs.existsSync(distDir)) {
-    console.error("❌ dist/ introuvable. Lance `npm run build`.");
+    console.error("❌ dist/ introuvable. `vite build` a-t-il bien tourné PENDANT le BUILD ?");
   } else {
     console.log("✅ dist/ présent. Contenu:", fs.readdirSync(distDir));
     if (!fs.existsSync(indexHtml)) console.error("❌ dist/index.html introuvable.");
@@ -29,7 +30,31 @@ try {
   console.error("❌ Erreur en lisant dist/:", e);
 }
 
-// Fichiers statiques
+// --- HEALTH ENDPOINTS ---
+app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+app.get("/_ah/health", (_req, res) => res.status(200).send("ok"));
+
+// --- REQUEST LOGGER ---
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on("finish", () => {
+    const dt = Date.now() - t0;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${dt}ms)`);
+  });
+  next();
+});
+
+// --- favicon par défaut pour éviter 500 ---
+app.get("/favicon.ico", (req, res) => {
+  const iconPath = path.join(distDir, "favicon.ico");
+  if (fs.existsSync(iconPath)) return res.sendFile(iconPath);
+  const EMPTY_GIF = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64");
+  res.setHeader("Content-Type", "image/gif");
+  res.setHeader("Cache-Control", "public, max-age=300");
+  res.status(200).send(EMPTY_GIF);
+});
+
+// --- STATIC FILES ---
 app.use(
   express.static(distDir, {
     index: false,
@@ -44,14 +69,21 @@ app.use(
   })
 );
 
-// Fallback SPA : uniquement si la route n'a PAS d'extension
+// --- SPA FALLBACK UNIQUEMENT pour routes sans extension ---
 app.get(/^(?!.*\.[^/]+$).*/, (_req, res) => {
-  if (!fs.existsSync(indexHtml)) return res.status(500).send("index.html manquant");
+  if (!fs.existsSync(indexHtml)) {
+    console.error("❌ index.html manquant au runtime.");
+    return res.status(500).send("Build manquant (index.html absent).");
+  }
   res.sendFile(indexHtml);
 });
 
-// 404 pour le reste
+// --- 404 + error handler ---
 app.use((_req, res) => res.status(404).send("Not found"));
+app.use((err, _req, res, _next) => {
+  console.error("💥 Unhandled error:", err);
+  res.status(500).send("Internal Server Error");
+});
 
 const port = process.env.PORT || 8080;
 app.listen(port, "0.0.0.0", () => {

@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node server.js"
+    "start": "node -e \"console.log('>> START fired. PORT=',process.env.PORT,' CWD=',process.cwd())\" && node server.js"
   },
   "engines": {
     "node": "20"
