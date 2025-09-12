@@ -47,7 +47,7 @@ app.get("/", (req, res) => {
   else res.status(500).send("index.html manquant dans dist/");
 });
 
-
+app.head("/", (_req, res) => res.sendStatus(200));
 
 // --------- servir la racine (readiness check) ---------
 app.get("/", (req, res) => {
@@ -87,6 +87,13 @@ app.get(/^(?!.*\.[^/]+$).*/, (req, res) => {
   } else {
     res.status(500).send("index.html manquant (fallback SPA).");
   }
+});
+
+app.use((req, res, next) => {
+  res.on("finish", () => {
+    console.log(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
+  });
+  next();
 });
 
 // --------- 404 ---------

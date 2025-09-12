@@ -7,15 +7,14 @@ runConfig:
   cpu: 2
   memoryMiB: 1024
 
-# S'assurer que le build et le run font ce qu'on attend
 scripts:
   buildCommand: npm ci && npm run build
   runCommand: node server.js
 
-# Forcer l'inclusion des artefacts nécessaires à l'exécution
 outputFiles:
   serverApp:
     include: [dist, server.js]
+
 
 env:
   # Clés du SDK Web Firebase (⚠️ PAS des clés privées Admin !)
