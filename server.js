@@ -1,5 +1,4 @@
-/* eslint-disable no-undef */
-// server.js (ESM, Express 5 compatible Firebase App Hosting)
+// server.js (ESM, Express 5, Vite SPA)
 import express from "express";
 import compression from "compression";
 import path from "node:path";
@@ -35,37 +34,14 @@ const app = express();
 app.disable("x-powered-by");
 app.use(compression());
 
-// --------- endpoints santé ---------
-// Santé: OK sur GET et HEAD (path dédié)
-const health = (_req, res) => res.status(200).send("ok");
-app.get(["/healthz", "/_ah/health", "/readyz"], health);
-app.head(["/healthz", "/_ah/health", "/readyz"], (_req, res) => res.sendStatus(200));
-
-// La racine sert le HTML
-app.get("/", (req, res) => {
-  if (fs.existsSync(indexHtml)) res.sendFile(indexHtml);
-  else res.status(500).send("index.html manquant dans dist/");
-});
-
-app.head("/", (_req, res) => res.sendStatus(200));
-
-// --------- servir la racine (readiness check) ---------
-app.get("/", (req, res) => {
-  if (fs.existsSync(indexHtml)) {
-    res.sendFile(indexHtml);
-  } else {
-    res.status(500).send("index.html manquant dans dist/");
-  }
-});
-
-// --------- favicon ---------
-app.get("/favicon.ico", (req, res) => {
-  const iconPath = path.join(distDir, "favicon.ico");
-  if (fs.existsSync(iconPath)) return res.sendFile(iconPath);
-  res.status(204).end();
+// (facultatif) petit log de requêtes utile en debug production
+app.use((req, res, next) => {
+  res.on("finish", () => console.log(`[req] ${req.method} ${req.url} -> ${res.statusCode}`));
+  next();
 });
 
 // --------- fichiers statiques ---------
+// index:false pour ne pas court-circuiter notre route "/" custom
 app.use(
   express.static(distDir, {
     index: false,
@@ -80,8 +56,36 @@ app.use(
   })
 );
 
+// --------- endpoints santé ---------
+// dédiés au debug / Cloud Run "pur". App Hosting tape souvent "/".
+const health = (_req, res) => res.status(200).send("ok");
+app.get(["/healthz", "/_ah/health", "/readyz"], health);
+app.head(["/healthz", "/_ah/health", "/readyz"], (_req, res) => res.sendStatus(200));
+
+// --------- racine ---------
+// GET "/" : sert l'app (index.html)
+app.get("/", (_req, res) => {
+  if (fs.existsSync(indexHtml)) {
+    res.sendFile(indexHtml);
+  } else {
+    res.status(500).send("index.html manquant dans dist/");
+  }
+});
+
+// HEAD "/" : renvoie 200 rapidement (utile si la sonde utilise HEAD)
+app.head("/", (_req, res) => res.sendStatus(200));
+
+// --------- favicon ---------
+app.get("/favicon.ico", (_req, res) => {
+  const iconPath = path.join(distDir, "favicon.ico");
+  if (fs.existsSync(iconPath)) return res.sendFile(iconPath);
+  res.status(204).end();
+});
+
 // --------- fallback SPA ---------
-app.get(/^(?!.*\.[^/]+$).*/, (req, res) => {
+// ⚠️ Express 5 + path-to-regexp v6 : ne pas utiliser '*'.
+// Ici : toutes les routes "sans extension" retombent sur index.html.
+app.get(/^(?!.*\.[^/]+$).*/, (_req, res) => {
   if (fs.existsSync(indexHtml)) {
     res.sendFile(indexHtml);
   } else {
@@ -89,14 +93,7 @@ app.get(/^(?!.*\.[^/]+$).*/, (req, res) => {
   }
 });
 
-app.use((req, res, next) => {
-  res.on("finish", () => {
-    console.log(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
-  });
-  next();
-});
-
-// --------- 404 ---------
+// --------- 404 (optionnel ; rarement atteint avec le fallback) ---------
 app.use((_req, res) => res.status(404).send("Not found"));
 
 // --------- lancement ---------
