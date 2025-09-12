@@ -36,10 +36,17 @@ app.disable("x-powered-by");
 app.use(compression());
 
 // --------- endpoints santé ---------
-// Santé: répond vite en 200 sur GET et HEAD
+// Santé: OK sur GET et HEAD (path dédié)
 const health = (_req, res) => res.status(200).send("ok");
-app.get(["/healthz", "/_ah/health", "/readyz", "/"], health);
-app.head(["/healthz", "/_ah/health", "/readyz", "/"], (_req, res) => res.sendStatus(200));
+app.get(["/healthz", "/_ah/health", "/readyz"], health);
+app.head(["/healthz", "/_ah/health", "/readyz"], (_req, res) => res.sendStatus(200));
+
+// La racine sert le HTML
+app.get("/", (req, res) => {
+  if (fs.existsSync(indexHtml)) res.sendFile(indexHtml);
+  else res.status(500).send("index.html manquant dans dist/");
+});
+
 
 
 // --------- servir la racine (readiness check) ---------
