@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 // server.js (ESM, Express 5 compatible Firebase App Hosting)
 import express from "express";
 import compression from "compression";
@@ -35,8 +36,11 @@ app.disable("x-powered-by");
 app.use(compression());
 
 // --------- endpoints santé ---------
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-app.get("/_ah/health", (_req, res) => res.status(200).send("ok"));
+// Santé: répond vite en 200 sur GET et HEAD
+const health = (_req, res) => res.status(200).send("ok");
+app.get(["/healthz", "/_ah/health", "/readyz", "/"], health);
+app.head(["/healthz", "/_ah/health", "/readyz", "/"], (_req, res) => res.sendStatus(200));
+
 
 // --------- servir la racine (readiness check) ---------
 app.get("/", (req, res) => {
