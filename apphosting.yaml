@@ -1,0 +1,25 @@
+# apphosting.yaml
+env:
+  - variable: VITE_FIREBASE_API_KEY
+    value: AIzaSyCtKMjQbbn8SSF4-kiNf2g0k10ddBuHB_k
+    availability: [BUILD]
+
+  - variable: VITE_FIREBASE_AUTH_DOMAIN
+    value: ranko-2ad7a.firebaseapp.com
+    availability: [BUILD]
+
+  - variable: VITE_FIREBASE_PROJECT_ID
+    value: ranko-2ad7a
+    availability: [BUILD]
+
+  - variable: VITE_FIREBASE_STORAGE_BUCKET
+    value: ranko-2ad7a.firebasestorage.app
+    availability: [BUILD]
+
+  - variable: VITE_FIREBASE_MESSAGING_SENDER_ID
+    value: 185493898227
+    availability: [BUILD]
+
+  - variable: VITE_FIREBASE_APP_ID
+    value: 1:185493898227:web:0a105d36982e3bab560886
+    availability: [BUILD]
