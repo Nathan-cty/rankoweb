@@ -1,9 +1,9 @@
 // src/pages/MangaDetail.jsx
-import { useParams } from "react-router-dom";
+import { useParams, useLocation, useNavigate } from "react-router-dom";
 import BackButton from "@/components/BackButton";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { addFavorite, removeFavorite, listenIsFavorite } from "@/features/favorites/favoritesApi";
-import { Heart } from "lucide-react";
+import { Heart, ChevronLeft, ChevronRight } from "lucide-react";
 
 // Firestore
 import { db } from "@/lib/firebase";
@@ -11,6 +11,10 @@ import { doc, getDoc } from "firebase/firestore";
 
 export default function MangaDetail() {
   const { id } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const fromRanking = location.state?.fromRanking; // { rankingId, ids: string[], index?: number }
 
   const [lite, setLite] = useState(null);     // doc dans /mangas
   const [detail, setDetail] = useState(null); // doc dans /mangaDetails
@@ -18,14 +22,85 @@ export default function MangaDetail() {
   const [isFav, setIsFav] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Écoute du statut favori
+  // ---- Contexte classement (navigation + position) ----
+  const idsFromRanking = Array.isArray(fromRanking?.ids) ? fromRanking.ids : null;
+
+  const currentIndex = useMemo(() => {
+    if (!idsFromRanking) return null;
+    const idxFromState = Number.isInteger(fromRanking?.index) ? fromRanking.index : null;
+    if (idxFromState != null && idsFromRanking[idxFromState] === id) return idxFromState;
+    const found = idsFromRanking.indexOf(id);
+    return found >= 0 ? found : null;
+  }, [id, idsFromRanking, fromRanking?.index]);
+
+  const hasNavContext = idsFromRanking && currentIndex != null;
+  const hasPrev = hasNavContext && currentIndex > 0;
+  const hasNext = hasNavContext && currentIndex < idsFromRanking.length - 1;
+  const prevId = hasPrev ? idsFromRanking[currentIndex - 1] : null;
+  const nextId = hasNext ? idsFromRanking[currentIndex + 1] : null;
+
+  const goToIndex = useCallback(
+    (nextIndex) => {
+      if (!idsFromRanking) return;
+      const targetId = idsFromRanking[nextIndex];
+      if (!targetId) return;
+      navigate(`/manga/${targetId}`, {
+        replace: true,
+        state: { fromRanking: { ...fromRanking, index: nextIndex } },
+      });
+    },
+    [idsFromRanking, navigate, fromRanking]
+  );
+
+  const goPrev = useCallback(() => { if (hasPrev) goToIndex(currentIndex - 1); }, [hasPrev, currentIndex, goToIndex]);
+  const goNext = useCallback(() => { if (hasNext) goToIndex(currentIndex + 1); }, [hasNext, currentIndex, goToIndex]);
+
+  // Navigation clavier
+  useEffect(() => {
+    if (!hasNavContext) return;
+    const onKey = (e) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); goPrev(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); goNext(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hasNavContext, goPrev, goNext]);
+
+  // Gestes swipe (mobile)
+  const touchStartRef = useRef(null);
+  const onTouchStart = (e) => {
+    if (!hasNavContext) return;
+    const t = e.touches?.[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+  };
+  const onTouchEnd = (e) => {
+    if (!hasNavContext || !touchStartRef.current) return;
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+    const dx = t.clientX - touchStartRef.current.x;
+    const dy = t.clientY - touchStartRef.current.y;
+    const dt = Date.now() - touchStartRef.current.t;
+    touchStartRef.current = null;
+
+    const THRESHOLD_X = 50;
+    const THRESHOLD_RATIO = 2;
+    const THRESHOLD_TIME = 600;
+
+    if (Math.abs(dx) > THRESHOLD_X && Math.abs(dx) > THRESHOLD_RATIO * Math.abs(dy) && dt < 1000 + THRESHOLD_TIME) {
+      if (dx < 0) goNext();
+      else goPrev();
+    }
+  };
+
+  // Favoris
   useEffect(() => {
     if (!id) return;
     const unsub = listenIsFavorite(id, setIsFav);
     return () => unsub?.();
   }, [id]);
 
-  // Charge les deux “tiroirs” Firestore
+  // Charge les données
   useEffect(() => {
     if (!id) return;
     let mounted = true;
@@ -41,10 +116,7 @@ export default function MangaDetail() {
         setDetail(detSnap.exists() ? { id: detSnap.id, ...detSnap.data() } : null);
       } catch (e) {
         console.error(e);
-        if (mounted) {
-          setLite(null);
-          setDetail(null);
-        }
+        if (mounted) { setLite(null); setDetail(null); }
       } finally {
         mounted && setLoading(false);
       }
@@ -52,13 +124,13 @@ export default function MangaDetail() {
     return () => { mounted = false; };
   }, [id]);
 
-  // Données affichées (avec fallback)
+  // Données affichées
   const title = lite?.title || "Manga";
   const author = lite?.author || "";
   const coverLarge = detail?.coverLargeUrl || lite?.coverThumbUrl || "";
   const description = detail?.description || "Aucune description disponible pour le moment.";
 
-  // Payload “favori” minimal (compat avec favoritesApi)
+  // Payload favoris
   const favPayload = useMemo(() => ({
     id,
     title,
@@ -82,7 +154,11 @@ export default function MangaDetail() {
   return (
     <main className="min-h-screen bg-background text-textc flex">
       <div className="mx-auto w-full max-w-sm flex-1 p-4">
-        <section className="relative rounded-2xl bg-background-card shadow border border-borderc p-4">
+        <section
+          className="relative rounded-2xl bg-background-card shadow border border-borderc p-4"
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+        >
           <div className="mb-2 flex items-center justify-between">
             <BackButton />
             <button
@@ -96,6 +172,30 @@ export default function MangaDetail() {
             </button>
           </div>
 
+          {/* Flèches de navigation (uniquement via classement) */}
+          {hasNavContext && !loading && !notFound && (
+            <>
+              <button
+                onClick={goPrev}
+                disabled={!hasPrev}
+                className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-background/80 border border-borderc shadow hover:bg-background-soft disabled:opacity-40"
+                aria-label="Manga précédent"
+                title="Manga précédent"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <button
+                onClick={goNext}
+                disabled={!hasNext}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full bg-background/80 border border-borderc shadow hover:bg-background-soft disabled:opacity-40"
+                aria-label="Manga suivant"
+                title="Manga suivant"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </>
+          )}
+
           {loading ? (
             <div className="h-[50vh] grid place-items-center text-sm text-textc-muted">Chargement…</div>
           ) : notFound ? (
@@ -103,7 +203,8 @@ export default function MangaDetail() {
           ) : (
             <>
               <div className="w-full flex justify-center">
-                <div className="h-[220px] w-[160px] rounded-xl overflow-hidden border border-borderc bg-background-soft">
+                {/* Image : même gabarit que dans RankingDetail (190x190) */}
+                <div className="relative h-[190px] w-[190px] rounded-xl overflow-hidden border border-borderc bg-background-soft">
                   {coverLarge ? (
                     <img
                       src={coverLarge}
@@ -116,6 +217,18 @@ export default function MangaDetail() {
                       Pas d’image
                     </div>
                   )}
+
+                  {/* BADGE de position : visible seulement via classement */}
+{hasNavContext && (
+  <div
+    className="absolute bottom-2 right-2 w-9 h-9 rounded-md bg-brand text-white text-lg font-bold grid place-items-center shadow-lg border border-borderc"
+    aria-label={`Position ${currentIndex + 1} dans le classement`}
+    title={`Position ${currentIndex + 1} dans le classement`}
+  >
+    {currentIndex + 1}
+  </div>
+)}
+
                 </div>
               </div>
 
@@ -128,6 +241,13 @@ export default function MangaDetail() {
                 <h2 className="text-sm font-semibold mb-1">Synopsis</h2>
                 <p className="text-sm text-textc-muted">{description}</p>
               </div>
+
+              {/* Indicateur global (optionnel) */}
+              {hasNavContext && (
+                <div className="mt-3 text-center text-[11px] text-textc-muted">
+                  {currentIndex + 1} / {idsFromRanking.length}
+                </div>
+              )}
             </>
           )}
         </section>

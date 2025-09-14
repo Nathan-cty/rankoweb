@@ -1,4 +1,3 @@
-// src/pages/RankingDetail.jsx
 import { useParams, Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { collection, doc, getDoc, onSnapshot, orderBy, query } from "firebase/firestore";
@@ -51,9 +50,15 @@ export default function RankingDetail() {
     return () => unsub();
   }, [id]);
 
-  // 3) À chaque changement d’items → récupérer les fiches /mangas correspondantes en 1–N batchs
+  // Liste ordonnée des IDs de mangas pour navigation depuis la fiche
+  const orderedMangaIds = useMemo(
+    () => items.map((it) => it.mangaId ?? it.id).filter(Boolean),
+    [items]
+  );
+
+  // 3) À chaque changement d’items → récupérer les fiches /mangas correspondantes
   useEffect(() => {
-    const ids = items.map((it) => it.mangaId ?? it.id).filter(Boolean);
+    const ids = orderedMangaIds;
     if (ids.length === 0) { setMangaDocs([]); return; }
     setLoadingMangas(true);
     (async () => {
@@ -70,7 +75,7 @@ export default function RankingDetail() {
         setLoadingMangas(false);
       }
     })();
-  }, [items]);
+  }, [orderedMangaIds]);
 
   // Dictionnaire id -> doc (utile si tu veux fusionner avec les items)
   const mangaById = useMemo(() => {
@@ -80,13 +85,13 @@ export default function RankingDetail() {
   }, [mangaDocs]);
   
   // 1) ID du manga en position 1 (le 1er de la liste triée)
-const topMangaId = items[0]?.mangaId ?? items[0]?.id;
+  const topMangaId = items[0]?.mangaId ?? items[0]?.id;
 
-// 2) Doc /mangas correspondant (si déjà chargé)
-const topManga = topMangaId ? mangaById.get(topMangaId) : null;
+  // 2) Doc /mangas correspondant (si déjà chargé)
+  const topManga = topMangaId ? mangaById.get(topMangaId) : null;
 
-// 3) URL d’image à utiliser pour la cover du ranking
-const rankingCover = topManga?.coverThumbUrl || ""; // ou coverLarge si tu préfères
+  // 3) URL d’image à utiliser pour la cover du ranking
+  const rankingCover = topManga?.coverThumbUrl || ""; // ou coverLarge si tu préfères
 
   return (
     <main className="min-h-screen bg-background text-textc flex">
@@ -98,21 +103,21 @@ const rankingCover = topManga?.coverThumbUrl || ""; // ou coverLarge si tu préf
 
           {/* Image du classement (optionnelle) */}
           <div className="w-full flex justify-center mt-2">
-  <div className="h-[190px] w-[190px] rounded-xl overflow-hidden border border-borderc bg-background-soft">
-    {rankingCover ? (
-      <img
-        src={rankingCover}
-        alt="Couverture"
-        className="h-full w-full object-cover"
-        loading="lazy"
-      />
-    ) : (
-      <div className="h-full w-full grid place-items-center text-xs text-textc-muted">
-        Pas d’image
-      </div>
-    )}
-  </div>
-</div>
+            <div className="h-[190px] w-[190px] rounded-xl overflow-hidden border border-borderc bg-background-soft">
+              {rankingCover ? (
+                <img
+                  src={rankingCover}
+                  alt="Couverture"
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="h-full w-full grid place-items-center text-xs text-textc-muted">
+                  Pas d’image
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Titre + compteur basé sur la LISTE réelle */}
           <div className="mt-4 text-center">
@@ -159,9 +164,16 @@ const rankingCover = topManga?.coverThumbUrl || ""; // ou coverLarge si tu préf
                         {idx + 1}.
                       </div>
 
-                      {/* Lien vers la fiche manga */}
+                      {/* Lien vers la fiche manga avec CONTEXTE DU CLASSEMENT */}
                       <Link
                         to={`/manga/${mid}`}
+                        state={{
+                          fromRanking: {
+                            rankingId: id,
+                            ids: orderedMangaIds, // ordre du classement
+                            index: idx,           // position actuelle
+                          },
+                        }}
                         className="flex items-center gap-3 flex-1 min-w-0"
                       >
                         <div className="h-12 w-12 rounded bg-background border border-borderc grid place-items-center text-[10px] text-textc-muted overflow-hidden">
