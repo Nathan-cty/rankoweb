@@ -14,8 +14,14 @@ export default defineConfig({
     },
   },
   server: {
-    host: true,          // écoute sur toutes les interfaces
+    host: true,          // écoute sur toutes les interfaces en dev
     port: 5173,
     strictPort: true,
+  },
+  preview: {
+    host: true,          // nécessaire pour Firebase App Hosting
+    port: Number(process.env.PORT) || 8080,
+    // autorise ton domaine et les domaines Cloud Run générés
+    allowedHosts: ["ranko-manga.com", ".a.run.app"],
   },
 })
