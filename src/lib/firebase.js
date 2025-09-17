@@ -14,6 +14,7 @@ const firebaseConfig = {
 };
 
 function assertFirebaseEnv(cfg) {
+  // eslint-disable-next-line no-unused-vars
   const missing = Object.entries(cfg).filter(([_, v]) => !v).map(([k]) => k);
   if (missing.length) {
     console.error("Firebase env manquantes:", missing);

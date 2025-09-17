@@ -1,7 +1,7 @@
 // src/features/rankings/ManageRankingModal.jsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { collection, onSnapshot, orderBy, query, doc, getDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
 import { deleteRankingItem, reorderRankingItems } from "./rankingsApi";
 import uselockBodyScroll from "@/hooks/useLockBodyScroll";
 
@@ -24,6 +24,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { GripHorizontal, Minus } from "lucide-react";
 
+// Firebase Storage
+import { getDownloadURL, ref as storageRef } from "firebase/storage";
+
 /* ---------------- Utils ---------------- */
 function ordersEqual(a, b) {
   if (!a || !b || a.length !== b.length) return false;
@@ -31,14 +34,64 @@ function ordersEqual(a, b) {
   return true;
 }
 
+const isHttp = (s) => /^https?:\/\//i.test(s || "");
+const isGs = (s) => /^gs:\/\//i.test(s || "");
+
+// Cache simple pour éviter de re-résoudre les mêmes objets
+const urlCache = new Map();
+
+async function resolveOne(raw) {
+  if (!raw) return "";
+
+  if (isHttp(raw)) return raw;
+
+  // normaliser vers un objectPath Storage
+  let objectPath = raw;
+  if (isGs(raw)) {
+    const m = raw.match(/^gs:\/\/[^/]+\/(.+)$/i);
+    objectPath = m ? m[1] : "";
+  } else {
+    objectPath = raw.replace(/^\/+/, "");
+  }
+  if (!objectPath) return "";
+
+  if (urlCache.has(objectPath)) return urlCache.get(objectPath);
+  const url = await getDownloadURL(storageRef(storage, objectPath));
+  urlCache.set(objectPath, url);
+  return url;
+}
+
+/** Hook: résout une liste de sources en URLs finales. Renvoie { raw: url }. */
+function useResolveStorageUrls(rawList) {
+  const [map, setMap] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const uniq = Array.from(new Set((rawList || []).filter(Boolean)));
+    (async () => {
+      const pairs = await Promise.all(
+        uniq.map(async (key) => {
+          try {
+            const url = await resolveOne(key);
+            return [key, url];
+          } catch {
+            return [key, ""];
+          }
+        })
+      );
+      if (alive) setMap(Object.fromEntries(pairs));
+    })();
+    return () => { alive = false; };
+  }, [rawList]);
+  return map;
+}
+
 /* ---------------- Row (draggable via poignée) ---------------- */
-function Row({ item, displayIndex, onRemove, manga, isActive }) {
+function Row({ item, displayIndex, onRemove, manga, isActive, coverUrl }) {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: item.id });
 
   const title = manga?.title || item.title || item.mangaId || item.id;
   const author = manga?.author || item.author || "";
-  const cover = manga?.coverThumbUrl || item.coverUrl || "";
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -54,6 +107,26 @@ function Row({ item, displayIndex, onRemove, manga, isActive }) {
     e.preventDefault();
     e.stopPropagation();
   };
+
+  // Log utile en dev pour repérer les champs manquants
+  // eslint-disable-next-line no-undef
+  if (process.env.NODE_ENV !== "production" && !coverUrl) {
+    // eslint-disable-next-line no-console
+    console.warn("No cover URL for ranking item:", {
+      item: {
+        id: item?.id,
+        coverUrl: item?.coverUrl,
+        cover: item?.cover,
+        thumb: item?.thumb,
+        thumbnail: item?.thumbnail,
+      },
+      manga: {
+        id: manga?.id,
+        coverThumbUrl: manga?.coverThumbUrl,
+        sourcescoverUrl: manga?.sourcescoverUrl,
+      },
+    });
+  }
 
   return (
     <li
@@ -83,8 +156,15 @@ function Row({ item, displayIndex, onRemove, manga, isActive }) {
       <div className="w-6 text-right text-sm tabular-nums text-textc-muted">{displayIndex}.</div>
 
       <div className="h-10 w-10 rounded bg-background border border-borderc grid place-items-center text-[10px] text-textc-muted overflow-hidden">
-        {cover ? (
-          <img src={cover} alt={title} className="h-full w-full object-cover" draggable={false} />
+        {coverUrl ? (
+          <img
+            src={coverUrl}
+            alt={title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+          />
         ) : (
           "cover"
         )}
@@ -113,11 +193,10 @@ function Row({ item, displayIndex, onRemove, manga, isActive }) {
 }
 
 /* ---------------- Clone visuel ---------------- */
-function RowOverlay({ item, manga }) {
+function RowOverlay({ item, manga, coverUrl }) {
   if (!item) return null;
   const title = manga?.title || item.title || item.mangaId || item.id;
   const author = manga?.author || item.author || "";
-  const cover = manga?.coverThumbUrl || item?.coverUrl || "";
 
   return (
     <div
@@ -129,7 +208,18 @@ function RowOverlay({ item, manga }) {
       </button>
       <div className="w-6 text-right text-sm tabular-nums text-textc-muted"> </div>
       <div className="h-10 w-10 rounded bg-background border border-borderc overflow-hidden grid place-items-center text-[10px] text-textc-muted">
-        {cover ? <img src={cover} alt="" className="h-full w-full object-cover" /> : "cover"}
+        {coverUrl ? (
+          <img
+            src={coverUrl}
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+          />
+        ) : (
+          "cover"
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{title}</div>
@@ -199,7 +289,6 @@ export default function ManageRankingModal({ rankingId, onClose }) {
     }
   };
 
-
   /* ---------- Temps réel + cache mangas ---------- */
   useEffect(() => {
     if (!rankingId) return;
@@ -223,25 +312,19 @@ export default function ManageRankingModal({ rankingId, onClose }) {
           return next;
         });
 
-        // 2) Maj UI ORDER (orderIds) — on ne remplace JAMAIS brutalement par l'ordre Firestore
+        // 2) Maj UI ORDER (orderIds) — ne pas écraser brutalement
         setOrderIds((prev) => {
-          // Si tout nouveau (premier snapshot) : initialiser à l'ordre reçu
           if (prev.length === 0) return snapshotIds;
 
-          // Si on attend un ordre précis après drag, n'applique que si ça matche
           if (waitingForExpectedSnapshotRef.current && lastSavedOrderRef.current) {
             if (ordersEqual(snapshotIds, lastSavedOrderRef.current)) {
               waitingForExpectedSnapshotRef.current = false;
               lastSavedOrderRef.current = null;
-              return snapshotIds.slice(); // validé par la base
+              return snapshotIds.slice();
             }
-            // Sinon, on ne touche pas l'ordre UI (on attend le bon snapshot)
             return prev;
           }
 
-          // Cas normal (inclut suppressions/ajouts) :
-          // - on conserve l'ordre précédent pour les ids encore présents
-          // - on ajoute en fin les ids nouveaux présents dans le snapshot
           const inSnap = new Set(snapshotIds);
           const kept = prev.filter((id) => inSnap.has(id));
           const appended = snapshotIds.filter((id) => !kept.includes(id));
@@ -273,6 +356,28 @@ export default function ManageRankingModal({ rankingId, onClose }) {
     return () => unsub();
   }, [rankingId]);
 
+  /* ---------- Résolution des thumbnails via Storage ---------- */
+  // Préparer toutes les "raw sources" à résoudre
+  const rawList = useMemo(() => {
+    const list = [];
+    for (const id of orderIds) {
+      const it = itemsById.get(id);
+      if (!it) continue;
+      const mid = it.mangaId ?? it.id;
+      const manga = mid ? mangaMap.get(mid) : null;
+
+      const raw =
+        manga?.coverThumbUrl ||
+        manga?.sourcescoverUrl ||
+        it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+        "";
+      if (raw) list.push(raw);
+    }
+    return list;
+  }, [orderIds, itemsById, mangaMap]);
+
+  const resolvedMap = useResolveStorageUrls(rawList);
+
   /* ---------- Supprimer ---------- */
   const onRemove = async (mangaId) => {
     try {
@@ -285,10 +390,9 @@ export default function ManageRankingModal({ rankingId, onClose }) {
         return next;
       });
 
-      // UI ORDER optimiste: on enlève l'id → séquence 1..n immédiate
+      // UI ORDER optimiste
       setOrderIds((prev) => prev.filter((id) => id !== mangaId));
 
-      // On n'attend rien de spécial côté ordre
       waitingForExpectedSnapshotRef.current = false;
       lastSavedOrderRef.current = null;
     } catch (e) {
@@ -299,6 +403,17 @@ export default function ManageRankingModal({ rankingId, onClose }) {
 
   const activeItem = activeId ? itemsById.get(activeId) : null;
   const activeManga = activeItem ? mangaMap.get(activeItem.mangaId ?? activeItem.id) : null;
+
+  // cover pour l’overlay (résolue depuis la même map)
+  const activeRaw =
+    (activeManga?.coverThumbUrl ||
+      activeManga?.sourcescoverUrl ||
+      activeItem?.coverUrl ||
+      activeItem?.cover ||
+      activeItem?.thumb ||
+      activeItem?.thumbnail ||
+      "") || "";
+  const activeCoverUrl = resolvedMap[activeRaw] || "";
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-end sm:place-items-center overscroll-contain">
@@ -347,6 +462,13 @@ export default function ManageRankingModal({ rankingId, onClose }) {
                   const manga = mid ? mangaMap.get(mid) : null;
                   const displayIndex = idx + 1; // ✅ toujours compact
 
+                  const raw =
+                    manga?.coverThumbUrl ||
+                    manga?.sourcescoverUrl ||
+                    it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+                    "";
+                  const coverUrl = resolvedMap[raw] || "";
+
                   return (
                     <Row
                       key={id}
@@ -355,6 +477,7 @@ export default function ManageRankingModal({ rankingId, onClose }) {
                       onRemove={onRemove}
                       manga={manga}
                       isActive={activeId === id}
+                      coverUrl={coverUrl}
                     />
                   );
                 })}
@@ -362,7 +485,9 @@ export default function ManageRankingModal({ rankingId, onClose }) {
             </SortableContext>
 
             <DragOverlay dropAnimation={null}>
-              {activeItem ? <RowOverlay item={activeItem} manga={activeManga} /> : null}
+              {activeItem ? (
+                <RowOverlay item={activeItem} manga={activeManga} coverUrl={activeCoverUrl} />
+              ) : null}
             </DragOverlay>
           </DndContext>
         </div>

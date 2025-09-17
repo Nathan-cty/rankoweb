@@ -1,56 +1,32 @@
+"use client"; // (Next.js seulement)
+
 import { useState } from "react";
+import {
+  doc, writeBatch, serverTimestamp,
+  collection, getDocs, query, where
+} from "firebase/firestore";
+import { db, auth, storage } from "@/lib/firebase";
 import { getDownloadURL, ref } from "firebase/storage";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { db, storage, auth } from "@/lib/firebase"; // adapte le chemin si besoin
-import { MANGA_SAMPLE } from "../data/manga.sample";
 import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 
 // utilitaire : minuscules + sans accents
-const fold = (s) =>
-  (s || "")
+function fold(s) {
+  return (s || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
-
-function extFromCoverUrl(coverUrl) {
-  if (!coverUrl) return ".jpg";
-  const m = coverUrl.match(/\.(jpg|jpeg|png|webp|gif|avif)$/i);
-  return m ? `.${m[1].toLowerCase()}` : ".jpg";
 }
-
-// essaie thumb/large, sinon fallback sur original
-async function getCoverUrls(storage, id, ext, originalCoverUrlOnSite = "") {
-  const base = `covers/original/${id}`;
-  const thumbPath = `${base}_200x${ext}`;
-  const largePath = `${base}_800x${ext}`;
-  const origPath = `${base}${ext}`;
-
-  let coverThumbUrl = "";
-  let coverLargeUrl = "";
-
-  try { coverThumbUrl = await getDownloadURL(ref(storage, thumbPath)); } catch { /* empty */ }
-  try { coverLargeUrl = await getDownloadURL(ref(storage, largePath)); } catch { /* empty */ }
-
-  if (!coverThumbUrl) {
-    try { coverThumbUrl = await getDownloadURL(ref(storage, origPath)); } catch { /* empty */ }
-  }
-  if (!coverLargeUrl) {
-    try { coverLargeUrl = await getDownloadURL(ref(storage, origPath)); } catch { /* empty */ }
-  }
-
-  // dernier fallback : utilise l’URL locale (ex: /cover/aot.jpg)
-  if (!coverThumbUrl && originalCoverUrlOnSite) coverThumbUrl = originalCoverUrlOnSite;
-  if (!coverLargeUrl && originalCoverUrlOnSite) coverLargeUrl = originalCoverUrlOnSite;
-
-  return { coverThumbUrl, coverLargeUrl };
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
+const isHttp = (s) => /^https?:\/\//i.test(s || "");
 
-// barre de login Google pour afficher UID
 function AuthBar() {
   const user = auth.currentUser;
   async function login() { await signInWithPopup(auth, new GoogleAuthProvider()); }
   async function logout() { await signOut(auth); }
-
   return (
     <div style={{ marginBottom: 20 }}>
       {user ? (
@@ -66,67 +42,145 @@ function AuthBar() {
   );
 }
 
+// Cherche un doc existant par anilistId dans /mangas ; si trouvé, renvoie son docId
+async function resolveDocIdByAni(db, anilistId, fallbackId) {
+  if (anilistId == null) return fallbackId; // pas d'aniId → on ne peut pas garantir l'unicité
+  const q = query(collection(db, "mangas"), where("anilistId", "==", anilistId));
+  const snap = await getDocs(q);
+  if (!snap.empty) return snap.docs[0].id; // réutiliser le doc existant
+  return fallbackId ?? String(anilistId);
+}
+
 export default function ImportMangas() {
-  const [log, setLog] = useState("");
+  const [file, setFile] = useState(null);
   const [running, setRunning] = useState(false);
+  const [log, setLog] = useState("");
+  const [done, setDone] = useState(0);
+  const [total, setTotal] = useState(0);
 
-  const append = (line) => setLog((l) => l + line + "\n");
+  function append(line) { setLog((l) => l + line + "\n"); }
 
-  const run = async () => {
-    if (!auth.currentUser) {
-      append("❌ Tu dois être connecté.");
-      return;
-    }
-    setRunning(true);
-    append(`Début import (${MANGA_SAMPLE.length} mangas)…`);
+  async function readJson(f) {
+    const text = await f.text();
+    const data = JSON.parse(text);
+    if (!Array.isArray(data)) throw new Error("Le JSON doit être une liste d'objets.");
+    return data;
+  }
 
-    for (const m of MANGA_SAMPLE) {
-      try {
-        const id = m.id;
-        const ext = extFromCoverUrl(m.coverUrl);
-        const { coverThumbUrl, coverLargeUrl } = await getCoverUrls(storage, id, ext, m.coverUrl);
+  async function run() {
+    if (!auth.currentUser) { append("❌ Tu dois être connecté."); return; }
+    if (!file) { append("❌ Sélectionne d'abord un fichier .json."); return; }
 
-        // Document "léger"
-        await setDoc(doc(db, "mangas", id), {
-          title: m.title,
-          titleLower: fold(m.title),
-          author: m.author,
-          authorLower: fold(m.author),
-          coverThumbUrl,
-          updatedAt: serverTimestamp(),
-        });
+    setRunning(true); setLog(""); setDone(0);
 
-        // Document "détail"
-        await setDoc(doc(db, "mangaDetails", id), {
-          description: m.description || "",
-          coverLargeUrl,
-        });
+    try {
+      const items = await readJson(file);
+      setTotal(items.length);
+      append(`Début import (${items.length} mangas)…`);
 
-        append(`✅ Importé : ${id}`);
-      } catch (e) {
-        console.error(e);
-        append(`❌ ${m.id} — ${e.code || e.message}`);
+      for (const group of chunk(items, 300)) { // 300 pour se laisser de la marge
+        const batch = writeBatch(db);
+
+        // ⚠️ On résout les docIds AVANT d'écrire (un await par item, simple & sûr)
+        const prepared = [];
+        for (const m of group) {
+          if (!m || !m.id) { append("⚠️ Entrée sans id — ignorée"); continue; }
+
+          const anilistId = m.anilistId != null ? m.anilistId : null;
+          const docId = await resolveDocIdByAni(db, anilistId, m.id); // unicité par ani
+
+          // URLs covers : convertir les chemins Storage en URLs HTTPS
+          let coverLarge =
+            (m.mangaDetails && m.mangaDetails.coverLargeUrl) ||
+            m.sourcescoverUrl || m.sourcesCoverUrl || "";
+          let coverThumb =
+            m.coverThumbUrl || m.sourcescoverUrl || m.sourcesCoverUrl || coverLarge || "";
+
+          if (coverLarge && !isHttp(coverLarge)) {
+            try { coverLarge = await getDownloadURL(ref(storage, coverLarge)); }
+            catch { append(`⚠️ ${docId} coverLarge non résolue (${coverLarge})`); }
+          }
+          if (coverThumb && !isHttp(coverThumb)) {
+            try { coverThumb = await getDownloadURL(ref(storage, coverThumb)); }
+            catch { append(`⚠️ ${docId} coverThumb non résolue (${coverThumb})`); }
+          }
+
+          prepared.push({ m, docId, anilistId, coverLarge, coverThumb });
+        }
+
+        // Ecriture OVERWRITE (merge: false) → remplace l'existant
+        for (const { m, docId, anilistId, coverLarge, coverThumb } of prepared) {
+          batch.set(
+            doc(db, "mangas", docId),
+            {
+              // résumé
+              title: m.title || "",
+              titleLower: fold(m.title || ""),
+              author: m.author || "",
+              authorLower: fold(m.author || ""),
+              coverThumbUrl: coverThumb || "",
+              anilistId: anilistId, // clé d'unicité
+              updatedAt: serverTimestamp(),
+              createdAt: serverTimestamp(),
+            },
+            { merge: false } // <-- écrase le doc
+          );
+
+          batch.set(
+            doc(db, "mangaDetails", docId),
+            {
+              description: (m.mangaDetails && m.mangaDetails.description) || "",
+              coverLargeUrl: coverLarge || "",
+              updatedAt: serverTimestamp(),
+              createdAt: serverTimestamp(),
+            },
+            { merge: false } // <-- écrase le doc
+          );
+        }
+
+        await batch.commit();
+        setDone((d) => d + prepared.length);
+        append(`✅ ${Math.min(done + prepared.length, items.length)}/${items.length}`);
       }
-    }
 
-    append("🎉 Import terminé.");
-    setRunning(false);
-  };
+      append("🎉 Import terminé (unicité par anilistId, overwrite activé).");
+    } catch (e) {
+      console.error(e);
+      append(`❌ Erreur: ${e.message || e}`);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const percent = total ? Math.round((done / total) * 100) : 0;
 
   return (
-    <div style={{ padding: 20, fontFamily: "sans-serif" }}>
-      <h1>Import Mangas</h1>
+    <div style={{ padding: 20, fontFamily: "sans-serif", maxWidth: 800, margin: "0 auto" }}>
+      <h1>Import Mangas (unicité par AniList → overwrite)</h1>
       <AuthBar />
-      <button onClick={run} disabled={running} style={{ padding: 12 }}>
-        {running ? "Import en cours…" : "Importer"}
-      </button>
-      <pre style={{
-        background: "#111",
-        color: "#0f0",
-        padding: 12,
-        marginTop: 12,
-        whiteSpace: "pre-wrap"
-      }}>
+
+      <div style={{ display: "grid", gap: 12, alignItems: "center", marginBottom: 12 }}>
+        <input
+          type="file"
+          accept="application/json"
+          onChange={(e) => setFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+          disabled={running}
+        />
+        <button onClick={run} disabled={running || !file} style={{ padding: 12 }}>
+          {running ? "Import en cours…" : "Importer"}
+        </button>
+      </div>
+
+      {total > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div>Progression : {done}/{total} ({percent}%)</div>
+          <div style={{ height: 8, background: "#eee", borderRadius: 4, overflow: "hidden", marginTop: 6 }}>
+            <div style={{ width: `${percent}%`, height: "100%", background: "#4f46e5" }} />
+          </div>
+        </div>
+      )}
+
+      <pre style={{ background: "#0b1020", color: "#d6e1ff", padding: 12, marginTop: 12, whiteSpace: "pre-wrap", borderRadius: 8 }}>
         {log}
       </pre>
     </div>

@@ -12,6 +12,7 @@ import ProtectedRoute from "@/features/auth/ProtectedRoute.jsx";
 import AnonOnly from "@/features/auth/AnonOnly.jsx";
 import MangaDetail from "@/pages/MangaDetails";
 import Favorites from "@/pages/Favorites.jsx";
+import ImportMangas from "../pages/admin/ImportMangas";
 
 export default function App() {
   return (
@@ -81,6 +82,15 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/import"
+        element={
+          <ProtectedRoute>
+            <ImportMangas />
           </ProtectedRoute>
         }
       />

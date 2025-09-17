@@ -1,11 +1,75 @@
+// src/pages/RankingDetail.jsx
 import { useParams, Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { collection, doc, getDoc, onSnapshot, orderBy, query } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { getMangasByIds } from "@/features/manga/mangaApi"; // ⬅️ nouveau
+import { db, storage } from "@/lib/firebase";
+import { getMangasByIds } from "@/features/manga/mangaApi";
 import AddMangaModal from "@/features/rankings/AddMangaModal";
 import BackButton from "@/components/BackButton";
 import ManageRankingModal from "@/features/rankings/ManageRankingModal";
+
+// Firebase Storage
+import { getDownloadURL, ref as storageRef } from "firebase/storage";
+
+/* -------------------------------- Helpers -------------------------------- */
+
+const isHttp = (s) => /^https?:\/\//i.test(s || "");
+const isGs = (s) => /^gs:\/\//i.test(s || "");
+
+// Cache simple en mémoire pour éviter des résolutions répétées
+const urlCache = new Map();
+
+/**
+ * Résout une "source" vers une URL utilisable par <img>.
+ * - http(s) -> tel quel
+ * - gs://bucket/path -> getDownloadURL(path)
+ * - "covers/original/a.jpg" (ou "/covers/original/a.jpg") -> getDownloadURL(path)
+ */
+async function resolveOne(raw) {
+  if (!raw) return "";
+
+  if (isHttp(raw)) return raw;
+
+  let objectPath = raw;
+  if (isGs(raw)) {
+    const m = raw.match(/^gs:\/\/[^/]+\/(.+)$/i);
+    objectPath = m ? m[1] : "";
+  } else {
+    objectPath = raw.replace(/^\/+/, ""); // supprime les / initiaux
+  }
+  if (!objectPath) return "";
+
+  if (urlCache.has(objectPath)) return urlCache.get(objectPath);
+  const url = await getDownloadURL(storageRef(storage, objectPath));
+  urlCache.set(objectPath, url);
+  return url;
+}
+
+/** Hook: résout une liste de "raw" vers des URLs finales. Renvoie { raw: url }. */
+function useResolveStorageUrls(rawList) {
+  const [map, setMap] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const uniq = Array.from(new Set((rawList || []).filter(Boolean)));
+    (async () => {
+      const pairs = await Promise.all(
+        uniq.map(async (key) => {
+          try {
+            const url = await resolveOne(key);
+            return [key, url];
+          } catch {
+            return [key, ""];
+          }
+        })
+      );
+      if (alive) setMap(Object.fromEntries(pairs));
+    })();
+    return () => { alive = false; };
+  }, [rawList]);
+  return map;
+}
+
+/* ------------------------------ Composant ------------------------------ */
 
 export default function RankingDetail() {
   const { id } = useParams();
@@ -14,8 +78,8 @@ export default function RankingDetail() {
   const [openManage, setOpenManage] = useState(false);
 
   const [title, setTitle] = useState("Mon classement");
-  const [items, setItems] = useState([]);      // items = { id, mangaId, position, ... }
-  const [mangaDocs, setMangaDocs] = useState([]); // docs de /mangas pour affichage
+  const [items, setItems] = useState([]);         // items = { id, mangaId, position, ... }
+  const [mangaDocs, setMangaDocs] = useState([]); // docs /mangas pour affichage
   const [loadingMangas, setLoadingMangas] = useState(false);
 
   // 1) Titre du classement (one-shot)
@@ -50,13 +114,13 @@ export default function RankingDetail() {
     return () => unsub();
   }, [id]);
 
-  // Liste ordonnée des IDs de mangas pour navigation depuis la fiche
+  // Liste ordonnée des IDs de mangas (pour navigation depuis la fiche)
   const orderedMangaIds = useMemo(
     () => items.map((it) => it.mangaId ?? it.id).filter(Boolean),
     [items]
   );
 
-  // 3) À chaque changement d’items → récupérer les fiches /mangas correspondantes
+  // 3) À chaque changement d’items → récupérer les docs /mangas correspondants
   useEffect(() => {
     const ids = orderedMangaIds;
     if (ids.length === 0) { setMangaDocs([]); return; }
@@ -77,21 +141,45 @@ export default function RankingDetail() {
     })();
   }, [orderedMangaIds]);
 
-  // Dictionnaire id -> doc (utile si tu veux fusionner avec les items)
+  // Dictionnaire id -> doc
   const mangaById = useMemo(() => {
     const map = new Map();
     for (const m of mangaDocs) map.set(m.id, m);
     return map;
   }, [mangaDocs]);
-  
-  // 1) ID du manga en position 1 (le 1er de la liste triée)
-  const topMangaId = items[0]?.mangaId ?? items[0]?.id;
 
-  // 2) Doc /mangas correspondant (si déjà chargé)
+  // Premier de la liste (pour la cover du ranking)
+  const topMangaId = items[0]?.mangaId ?? items[0]?.id;
   const topManga = topMangaId ? mangaById.get(topMangaId) : null;
 
-  // 3) URL d’image à utiliser pour la cover du ranking
-  const rankingCover = topManga?.coverThumbUrl || ""; // ou coverLarge si tu préfères
+  /* ---------- Résolution des covers via Storage ---------- */
+
+  // Prépare toutes les sources d'images à résoudre (cover ranking + vignettes liste)
+  const rawCoverList = useMemo(() => {
+    const list = [];
+    const topRaw = topManga?.coverThumbUrl || topManga?.sourcescoverUrl || "";
+    if (topRaw) list.push(topRaw);
+    for (const it of items) {
+      const mid = it.mangaId ?? it.id;
+      const m = mangaById.get(mid);
+      const raw =
+        m?.coverThumbUrl ||
+        m?.sourcescoverUrl ||
+        it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+        "";
+      if (raw) list.push(raw);
+    }
+    return list;
+  }, [topManga, items, mangaById]);
+
+  // Map { raw -> url finale } (http(s) ou résolue depuis Storage)
+  const resolved = useResolveStorageUrls(rawCoverList);
+
+  // URL d’image à utiliser pour la cover du ranking
+  const topRaw = topManga?.coverThumbUrl || topManga?.sourcescoverUrl || "";
+  const rankingCover = resolved[topRaw] || "";
+
+  /* ------------------------------ Rendu ------------------------------ */
 
   return (
     <main className="min-h-screen bg-background text-textc flex">
@@ -110,6 +198,7 @@ export default function RankingDetail() {
                   alt="Couverture"
                   className="h-full w-full object-cover"
                   loading="lazy"
+                  decoding="async"
                 />
               ) : (
                 <div className="h-full w-full grid place-items-center text-xs text-textc-muted">
@@ -152,7 +241,14 @@ export default function RankingDetail() {
                   const m = mangaById.get(mid);     // doc depuis /mangas
                   const title = m?.title || it.title || mid;
                   const author = m?.author || it.author || "";
-                  const cover = m?.coverThumbUrl || it.coverUrl || ""; // fallback
+
+                  // Source uniforme (fallbacks alignés avec MangaDetail)
+                  const raw =
+                    m?.coverThumbUrl ||
+                    m?.sourcescoverUrl ||
+                    it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+                    "";
+                  const cover = resolved[raw] || "";
 
                   return (
                     <li
@@ -170,8 +266,8 @@ export default function RankingDetail() {
                         state={{
                           fromRanking: {
                             rankingId: id,
-                            ids: orderedMangaIds, // ordre du classement
-                            index: idx,           // position actuelle
+                            ids: orderedMangaIds,
+                            index: idx,
                           },
                         }}
                         className="flex items-center gap-3 flex-1 min-w-0"
@@ -183,6 +279,7 @@ export default function RankingDetail() {
                               alt={title}
                               className="h-full w-full object-cover"
                               loading="lazy"
+                              decoding="async"
                             />
                           ) : (
                             "cover"

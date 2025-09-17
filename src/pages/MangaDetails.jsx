@@ -6,8 +6,58 @@ import { addFavorite, removeFavorite, listenIsFavorite } from "@/features/favori
 import { Heart, ChevronLeft, ChevronRight } from "lucide-react";
 
 // Firestore
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase"; // ⬅️ Assure-toi d'exporter `storage` depuis lib/firebase
 import { doc, getDoc } from "firebase/firestore";
+// Storage
+import { ref as storageRef, getDownloadURL } from "firebase/storage";
+
+/* ---------------- Utils ---------------- */
+
+// URL absolue (http/s) ?
+const isHttp = (s) => /^https?:\/\//i.test(s || "");
+// URL gs:// ?
+const isGs = (s) => /^gs:\/\//i.test(s || "");
+
+// Un petit cache mémoire pour éviter de refaire getDownloadURL
+const urlCache = new Map();
+
+/**
+ * Résout un chemin d'image vers une URL utilisable par <img>.
+ * - http(s) -> tel quel
+ * - gs://bucket/path -> getDownloadURL(path)
+ * - chemin Storage (ex: "covers/original/a.jpg" ou "/covers/original/a.jpg") -> getDownloadURL(path)
+ * - sinon -> "" (rien)
+ */
+async function resolveImageUrl(input) {
+  if (!input) return "";
+
+  // Déjà une URL publique
+  if (isHttp(input)) return input;
+
+  // Normaliser en "path" Storage
+  let objectPath = input;
+  if (isGs(input)) {
+    // gs://bucket/path -> on extrait juste "path"
+    const m = input.match(/^gs:\/\/[^/]+\/(.+)$/i);
+    objectPath = m ? m[1] : "";
+  } else {
+    // Chemin style "covers/..." ou "/covers/..."
+    objectPath = input.replace(/^\/+/, "");
+  }
+
+  if (!objectPath) return "";
+
+  // Cache
+  if (urlCache.has(objectPath)) return urlCache.get(objectPath);
+
+  // Résoudre via Storage
+  const refObj = storageRef(storage, objectPath);
+  const url = await getDownloadURL(refObj);
+  urlCache.set(objectPath, url);
+  return url;
+}
+
+/* ----------------------------------------------------------- */
 
 export default function MangaDetail() {
   const { id } = useParams();
@@ -21,6 +71,9 @@ export default function MangaDetail() {
   const [loading, setLoading] = useState(true);
   const [isFav, setIsFav] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // URL d'image résolue (https) à afficher
+  const [coverUrlResolved, setCoverUrlResolved] = useState("");
 
   // ---- Contexte classement (navigation + position) ----
   const idsFromRanking = Array.isArray(fromRanking?.ids) ? fromRanking.ids : null;
@@ -36,8 +89,7 @@ export default function MangaDetail() {
   const hasNavContext = idsFromRanking && currentIndex != null;
   const hasPrev = hasNavContext && currentIndex > 0;
   const hasNext = hasNavContext && currentIndex < idsFromRanking.length - 1;
-  const prevId = hasPrev ? idsFromRanking[currentIndex - 1] : null;
-  const nextId = hasNext ? idsFromRanking[currentIndex + 1] : null;
+ 
 
   const goToIndex = useCallback(
     (nextIndex) => {
@@ -100,20 +152,23 @@ export default function MangaDetail() {
     return () => unsub?.();
   }, [id]);
 
-  // Charge les données
+  // Charge les données Firestore
   useEffect(() => {
     if (!id) return;
     let mounted = true;
     (async () => {
       setLoading(true);
+      setCoverUrlResolved(""); // reset pendant le changement
       try {
         const [liteSnap, detSnap] = await Promise.all([
           getDoc(doc(db, "mangas", id)),
           getDoc(doc(db, "mangaDetails", id)),
         ]);
         if (!mounted) return;
-        setLite(liteSnap.exists() ? { id: liteSnap.id, ...liteSnap.data() } : null);
-        setDetail(detSnap.exists() ? { id: detSnap.id, ...detSnap.data() } : null);
+        const liteData = liteSnap.exists() ? { id: liteSnap.id, ...liteSnap.data() } : null;
+        const detData  = detSnap.exists()  ? { id: detSnap.id,  ...detSnap.data() }  : null;
+        setLite(liteData);
+        setDetail(detData);
       } catch (e) {
         console.error(e);
         if (mounted) { setLite(null); setDetail(null); }
@@ -124,19 +179,45 @@ export default function MangaDetail() {
     return () => { mounted = false; };
   }, [id]);
 
-  // Données affichées
+  // Données affichées (sources brutes depuis Firestore)
   const title = lite?.title || "Manga";
   const author = lite?.author || "";
-  const coverLarge = detail?.coverLargeUrl || lite?.coverThumbUrl || "";
+  const coverCandidate =
+    detail?.coverLargeUrl ||
+    lite?.coverThumbUrl ||
+    lite?.sourcescoverUrl ||
+    "";
+
   const description = detail?.description || "Aucune description disponible pour le moment.";
 
-  // Payload favoris
+  // 🔑 Résolution asynchrone de l'URL d'image (Storage -> HTTPS)
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      if (!coverCandidate) {
+        if (alive) setCoverUrlResolved("");
+        return;
+      }
+      try {
+        const url = await resolveImageUrl(coverCandidate);
+        if (alive) setCoverUrlResolved(url);
+      } catch (e) {
+        console.warn("Cover resolve failed:", coverCandidate, e);
+        if (alive) setCoverUrlResolved("");
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [coverCandidate]);
+
+  // Payload favoris (on peut mettre la resolue si tu veux de jolies miniatures dans la liste des favoris)
   const favPayload = useMemo(() => ({
     id,
     title,
     author,
-    coverUrl: lite?.coverThumbUrl || coverLarge || "",
-  }), [id, title, author, lite?.coverThumbUrl, coverLarge]);
+    coverUrl: coverUrlResolved || "", // miniature fiable
+  }), [id, title, author, coverUrlResolved]);
 
   const toggleFavorite = async () => {
     if (!id || saving) return;
@@ -205,12 +286,12 @@ export default function MangaDetail() {
               <div className="w-full flex justify-center">
                 {/* Image : même gabarit que dans RankingDetail (190x190) */}
                 <div className="relative h-[190px] w-[190px] rounded-xl overflow-hidden border border-borderc bg-background-soft">
-                  {coverLarge ? (
+                  {coverUrlResolved ? (
                     <img
-                      src={coverLarge}
+                      src={coverUrlResolved}
                       alt={title}
                       className="h-full w-full object-cover"
-                      loading="lazy"
+                      decoding="async"
                     />
                   ) : (
                     <div className="h-full w-full grid place-items-center text-xs text-textc-muted">
@@ -219,16 +300,15 @@ export default function MangaDetail() {
                   )}
 
                   {/* BADGE de position : visible seulement via classement */}
-{hasNavContext && (
-  <div
-    className="absolute bottom-2 right-2 w-9 h-9 rounded-md bg-brand text-white text-lg font-bold grid place-items-center shadow-lg border border-borderc"
-    aria-label={`Position ${currentIndex + 1} dans le classement`}
-    title={`Position ${currentIndex + 1} dans le classement`}
-  >
-    {currentIndex + 1}
-  </div>
-)}
-
+                  {hasNavContext && (
+                    <div
+                      className="absolute bottom-2 right-2 w-9 h-9 rounded-md bg-brand text-white text-lg font-bold grid place-items-center shadow-lg border border-borderc"
+                      aria-label={`Position ${currentIndex + 1} dans le classement`}
+                      title={`Position ${currentIndex + 1} dans le classement`}
+                    >
+                      {currentIndex + 1}
+                    </div>
+                  )}
                 </div>
               </div>
 
