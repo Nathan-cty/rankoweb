@@ -7,6 +7,10 @@ import { getMangasByIds } from "@/features/manga/mangaApi";
 import AddMangaModal from "@/features/rankings/AddMangaModal";
 import BackButton from "@/components/BackButton";
 import ManageRankingModal from "@/features/rankings/ManageRankingModal";
+import ShareLinkButton from "@/components/ShareLinkButton";
+
+// Infinite slice (réutilisable partout)
+import { useInfiniteSlice } from "@/hooks/useInfiniteSlice";
 
 // Firebase Storage
 import { getDownloadURL, ref as storageRef } from "firebase/storage";
@@ -82,7 +86,12 @@ export default function RankingDetail() {
   const [mangaDocs, setMangaDocs] = useState([]); // docs /mangas pour affichage
   const [loadingMangas, setLoadingMangas] = useState(false);
 
-  // 1) Titre du classement (one-shot)
+  // NEW — états pour la génération de l'URL de partage
+  const [ownerHandle, setOwnerHandle] = useState(null); // ex: "nathan"
+  const [slug, setSlug] = useState("");                 // ex: "top-2025-shonen"
+  const [shortid, setShortid] = useState("");           // ex: "6ie9zq7q" (fallback: id)
+
+  // 1) Titre + méta du classement (one-shot)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -91,6 +100,11 @@ export default function RankingDetail() {
         if (mounted && snap.exists()) {
           const data = snap.data();
           setTitle(data.title || "Classement");
+
+          // Renseigne les infos d'URL (avec fallbacks)
+          setOwnerHandle(data.ownerHandle || data.userHandle || null);
+          setSlug(data.slug || "");            // si vide, ShareLinkButton dérivera du title
+          setShortid(data.shortid || id);      // fallback: utilise l'id du doc
         }
       } catch (e) {
         console.error(e);
@@ -152,14 +166,33 @@ export default function RankingDetail() {
   const topMangaId = items[0]?.mangaId ?? items[0]?.id;
   const topManga = topMangaId ? mangaById.get(topMangaId) : null;
 
+  /* ----------------- Affichage progressif (20 par 20) ----------------- */
+  const {
+    visibleCount,
+    hasMore,
+    loadMore,
+    containerRef,
+    sentinelRef,
+    ioReady,
+  } = useInfiniteSlice({
+    total: items.length,
+    initial: 20,
+    step: 20,
+  });
+
+  const visibleItems = useMemo(
+    () => items.slice(0, visibleCount),
+    [items, visibleCount]
+  );
+
   /* ---------- Résolution des covers via Storage ---------- */
 
-  // Prépare toutes les sources d'images à résoudre (cover ranking + vignettes liste)
+  // Prépare les sources d'images à résoudre (cover ranking + vignettes visibles)
   const rawCoverList = useMemo(() => {
     const list = [];
     const topRaw = topManga?.coverThumbUrl || topManga?.sourcescoverUrl || "";
     if (topRaw) list.push(topRaw);
-    for (const it of items) {
+    for (const it of visibleItems) {
       const mid = it.mangaId ?? it.id;
       const m = mangaById.get(mid);
       const raw =
@@ -170,14 +203,14 @@ export default function RankingDetail() {
       if (raw) list.push(raw);
     }
     return list;
-  }, [topManga, items, mangaById]);
+  }, [topManga, visibleItems, mangaById]);
 
   // Map { raw -> url finale } (http(s) ou résolue depuis Storage)
   const resolved = useResolveStorageUrls(rawCoverList);
 
-  // URL d’image à utiliser pour la cover du ranking
-  const topRaw = topManga?.coverThumbUrl || topManga?.sourcescoverUrl || "";
-  const rankingCover = resolved[topRaw] || "";
+  // URL d’image à utiliser pour la cover du ranking (renommage pour éviter toute ambiguïté)
+  const rankingTopRaw = topManga?.coverThumbUrl || topManga?.sourcescoverUrl || "";
+  const rankingCover = resolved[rankingTopRaw] || "";
 
   /* ------------------------------ Rendu ------------------------------ */
 
@@ -222,10 +255,20 @@ export default function RankingDetail() {
             <button className="btn-ghost" onClick={() => setOpenManage(true)}>
               Modifier
             </button>
+            <ShareLinkButton
+              title={title}
+              ownerHandle={ownerHandle}  // récupéré depuis Firestore
+              slug={slug}                // peut être vide, fallback dans le composant
+              shortid={shortid}          // fallback: id
+              id={id}
+              className="text-primary hover:bg-primary/10 focus:ring-primary/30"
+            >
+              Partager
+            </ShareLinkButton>
           </div>
 
-          {/* Liste des mangas (affichés depuis /mangas) */}
-          <div className="mt-6 flex-1 overflow-auto">
+          {/* Liste des mangas (affichage progressif) */}
+          <div className="mt-6 flex-1 overflow-auto" ref={containerRef}>
             {items.length === 0 ? (
               <div className="text-center text-sm text-textc-muted py-8">
                 Aucun manga dans ce classement.
@@ -235,66 +278,89 @@ export default function RankingDetail() {
                 Chargement…
               </div>
             ) : (
-              <ul className="space-y-3">
-                {items.map((it, idx) => {
-                  const mid = it.mangaId ?? it.id; // identifiant du manga
-                  const m = mangaById.get(mid);     // doc depuis /mangas
-                  const title = m?.title || it.title || mid;
-                  const author = m?.author || it.author || "";
+              <>
+                <ul className="space-y-3">
+                  {visibleItems.map((it, idx) => {
+                    const mid = it.mangaId ?? it.id; // identifiant du manga
+                    const m = mangaById.get(mid);     // doc depuis /mangas
+                    const mangaTitle = m?.title || it.title || mid;
+                    const author = m?.author || it.author || "";
 
-                  // Source uniforme (fallbacks alignés avec MangaDetail)
-                  const raw =
-                    m?.coverThumbUrl ||
-                    m?.sourcescoverUrl ||
-                    it.coverUrl || it.cover || it.thumb || it.thumbnail ||
-                    "";
-                  const cover = resolved[raw] || "";
+                    // Source uniforme (fallbacks alignés avec MangaDetail)
+                    const raw =
+                      m?.coverThumbUrl ||
+                      m?.sourcescoverUrl ||
+                      it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+                      "";
+                    const cover = resolved[raw] || "";
 
-                  return (
-                    <li
-                      key={it.id}
-                      className="flex items-center gap-3 rounded-xl border border-borderc bg-background-soft px-3 py-2"
-                    >
-                      {/* Numéro */}
-                      <div className="w-6 text-right text-sm tabular-nums text-textc-muted">
-                        {idx + 1}.
-                      </div>
+                    const globalIndex = idx; // visibleItems commence à 0 => index global identique
 
-                      {/* Lien vers la fiche manga avec CONTEXTE DU CLASSEMENT */}
-                      <Link
-                        to={`/manga/${mid}`}
-                        state={{
-                          fromRanking: {
-                            rankingId: id,
-                            ids: orderedMangaIds,
-                            index: idx,
-                          },
-                        }}
-                        className="flex items-center gap-3 flex-1 min-w-0"
+                    return (
+                      <li
+                        key={it.id}
+                        className="flex items-center gap-3 rounded-xl border border-borderc bg-background-soft px-3 py-2"
                       >
-                        <div className="h-12 w-12 rounded bg-background border border-borderc grid place-items-center text-[10px] text-textc-muted overflow-hidden">
-                          {cover ? (
-                            <img
-                              src={cover}
-                              alt={title}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                              decoding="async"
-                            />
-                          ) : (
-                            "cover"
-                          )}
+                        {/* Numéro (selon la vue) */}
+                        <div className="w-6 text-right text-sm tabular-nums text-textc-muted">
+                          {globalIndex + 1}.
                         </div>
 
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{title}</div>
-                          <div className="text-xs text-textc-muted truncate">{author}</div>
-                        </div>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
+                        {/* Lien vers la fiche manga avec CONTEXTE DU CLASSEMENT */}
+                        <Link
+                          to={`/manga/${mid}`}
+                          state={{
+                            fromRanking: {
+                              rankingId: id,
+                              ids: orderedMangaIds,
+                              index: globalIndex,
+                            },
+                          }}
+                          className="flex items-center gap-3 flex-1 min-w-0"
+                        >
+                          <div className="h-12 w-12 rounded bg-background border border-borderc grid place-items-center text-[10px] text-textc-muted overflow-hidden">
+                            {cover ? (
+                              <img
+                                src={cover}
+                                alt={mangaTitle}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            ) : (
+                              "cover"
+                            )}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">{mangaTitle}</div>
+                            <div className="text-xs text-textc-muted truncate">{author}</div>
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {/* Sentinelle pour auto-chargement */}
+                <div ref={sentinelRef} style={{ height: 1 }} />
+
+                {/* Fallback / Fin de liste */}
+                <div className="py-2 text-center">
+                  {!hasMore && items.length > 0 && (
+                    <p className="text-xs text-textc-muted">— Fin de la liste —</p>
+                  )}
+                  {hasMore && (
+                    <button
+                      type="button"
+                      onClick={loadMore}
+                      className="mt-2 text-sm underline text-textc-muted hover:text-textc"
+                    >
+                      {ioReady ? "Charger plus (si besoin)" : "Charger plus"}
+                    </button>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </section>

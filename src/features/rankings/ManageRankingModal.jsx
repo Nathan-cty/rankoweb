@@ -34,6 +34,12 @@ function ordersEqual(a, b) {
   return true;
 }
 
+function ellipsize(str, maxChars = 20) {
+  if (!str) return "";
+  return str.length > maxChars ? `${str.slice(0, maxChars - 1)}…` : str;
+}
+
+
 const isHttp = (s) => /^https?:\/\//i.test(s || "");
 const isGs = (s) => /^gs:\/\//i.test(s || "");
 
@@ -80,7 +86,9 @@ function useResolveStorageUrls(rawList) {
       );
       if (alive) setMap(Object.fromEntries(pairs));
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [rawList]);
   return map;
 }
@@ -102,6 +110,9 @@ function Row({ item, displayIndex, onRemove, manga, isActive, coverUrl }) {
     touchAction: "auto",
     visibility: isActive ? "hidden" : "visible",
   };
+
+  const titleText = ellipsize(title, 20);
+  const authorText = ellipsize(author, 20);
 
   const stopDragStart = (e) => {
     e.preventDefault();
@@ -135,6 +146,7 @@ function Row({ item, displayIndex, onRemove, manga, isActive, coverUrl }) {
       className={[
         "flex items-center gap-3 rounded-xl border border-borderc bg-background-soft px-3 py-2",
         "touch-manipulation select-none",
+        "w-full max-w-full overflow-hidden", // évite l'élargissement horizontal
       ].join(" ")}
       aria-label={`Réordonner ${title}`}
     >
@@ -145,7 +157,7 @@ function Row({ item, displayIndex, onRemove, manga, isActive, coverUrl }) {
         onMouseDown={stopDragStart}
         onTouchStart={stopDragStart}
         onClick={() => onRemove(item.id)}
-        className="p-2 rounded hover:bg-background focus:outline-none active:bg-transparent"
+        className="shrink-0 p-2 rounded hover:bg-background focus:outline-none active:bg-transparent"
         aria-label={`Supprimer ${title}`}
         title="Supprimer"
       >
@@ -153,9 +165,11 @@ function Row({ item, displayIndex, onRemove, manga, isActive, coverUrl }) {
       </button>
 
       {/* ✅ index d'affichage (1..n) calculé depuis orderIds */}
-      <div className="w-6 text-right text-sm tabular-nums text-textc-muted">{displayIndex}.</div>
+      <div className="shrink-0 w-6 text-right text-sm tabular-nums text-textc-muted">
+        {displayIndex}.
+      </div>
 
-      <div className="h-10 w-10 rounded bg-background border border-borderc grid place-items-center text-[10px] text-textc-muted overflow-hidden">
+      <div className="shrink-0 h-10 w-10 rounded bg-background border border-borderc grid place-items-center text-[10px] text-textc-muted overflow-hidden">
         {coverUrl ? (
           <img
             src={coverUrl}
@@ -170,16 +184,17 @@ function Row({ item, displayIndex, onRemove, manga, isActive, coverUrl }) {
         )}
       </div>
 
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium truncate">{title}</div>
-        <div className="text-xs text-textc-muted truncate">{author}</div>
+      {/* Zone texte: seule partie flexible */}
+      <div className="flex-1 basis-0 min-w-0">
+        <div className="text-sm font-medium truncate">{titleText}</div>
+        <div className="text-xs text-textc-muted truncate">{authorText}</div>
       </div>
 
-      {/* Poignée élargie (drag uniquement ici) */}
+      {/* Poignée (drag uniquement ici) */}
       <button
         type="button"
         aria-label={`Saisir et déplacer ${title}`}
-        className="ml-1 -mr-2 py-3 px-4 rounded-lg cursor-grab active:cursor-grabbing hover:bg-background focus:outline-none"
+        className="shrink-0 ml-1 py-3 px-3 rounded-lg cursor-grab active:cursor-grabbing hover:bg-background focus:outline-none"
         style={{ touchAction: "none" }}
         {...listeners}
         {...attributes}
@@ -198,16 +213,19 @@ function RowOverlay({ item, manga, coverUrl }) {
   const title = manga?.title || item.title || item.mangaId || item.id;
   const author = manga?.author || item.author || "";
 
+  const titleText = ellipsize(title, 20);
+const authorText = ellipsize(author, 20);
+
   return (
     <div
-      className="flex items-center gap-3 rounded-xl border border-borderc bg-background-soft px-3 py-2 shadow-2xl"
+      className="flex items-center gap-3 rounded-xl border border-borderc bg-background-soft px-3 py-2 shadow-2xl max-w-full overflow-hidden"
       style={{ pointerEvents: "none" }}
     >
-      <button type="button" tabIndex={-1} className="p-2 rounded pointer-events-none" aria-hidden>
+      <button type="button" tabIndex={-1} className="shrink-0 p-2 rounded pointer-events-none" aria-hidden>
         <Minus size={18} className="opacity-40" />
       </button>
-      <div className="w-6 text-right text-sm tabular-nums text-textc-muted"> </div>
-      <div className="h-10 w-10 rounded bg-background border border-borderc overflow-hidden grid place-items-center text-[10px] text-textc-muted">
+      <div className="shrink-0 w-6 text-right text-sm tabular-nums text-textc-muted"> </div>
+      <div className="shrink-0 h-10 w-10 rounded bg-background border border-borderc overflow-hidden grid place-items-center text-[10px] text-textc-muted">
         {coverUrl ? (
           <img
             src={coverUrl}
@@ -221,11 +239,11 @@ function RowOverlay({ item, manga, coverUrl }) {
           "cover"
         )}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium truncate">{title}</div>
-        <div className="text-xs text-textc-muted truncate">{author}</div>
+      <div className="flex-1 basis-0 min-w-0">
+        <div className="text-sm font-medium truncate">{titleText}</div>
+        <div className="text-xs text-textc-muted truncate">{authorText}</div>
       </div>
-      <div className="p-2 rounded text-textc-muted">
+      <div className="shrink-0 p-2 rounded text-textc-muted">
         <GripHorizontal size={18} />
       </div>
     </div>
@@ -252,7 +270,9 @@ export default function ManageRankingModal({ rankingId, onClose }) {
   // Cache mangas
   const [mangaMap, setMangaMap] = useState(new Map());
   const mangaMapRef = useRef(mangaMap);
-  useEffect(() => { mangaMapRef.current = mangaMap; }, [mangaMap]);
+  useEffect(() => {
+    mangaMapRef.current = mangaMap;
+  }, [mangaMap]);
 
   /* ---------- DnD (poignée) ---------- */
   const sensors = useSensors(useSensor(PointerSensor, {}));
@@ -369,7 +389,10 @@ export default function ManageRankingModal({ rankingId, onClose }) {
       const raw =
         manga?.coverThumbUrl ||
         manga?.sourcescoverUrl ||
-        it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+        it.coverUrl ||
+        it.cover ||
+        it.thumb ||
+        it.thumbnail ||
         "";
       if (raw) list.push(raw);
     }
@@ -426,7 +449,11 @@ export default function ManageRankingModal({ rankingId, onClose }) {
       >
         {/* header */}
         <div className="mb-3 grid grid-cols-[32px_1fr_32px] items-center">
-          <button onClick={onClose} className="rounded-full p-2 hover:bg-background-soft justify-self-start" aria-label="Fermer">
+          <button
+            onClick={onClose}
+            className="rounded-full p-2 hover:bg-background-soft justify-self-start"
+            aria-label="Fermer"
+          >
             ✕
           </button>
           <h3 className="text-lg font-semibold text-center">Modifier le classement</h3>
@@ -440,7 +467,7 @@ export default function ManageRankingModal({ rankingId, onClose }) {
         )}
 
         {/* zone scrollable — scroll natif */}
-        <div className="flex-1 overscroll-contain relative overflow-auto">
+        <div className="flex-1 overscroll-contain relative overflow-y-auto overflow-x-hidden">
           <DndContext
             sensors={sensors}
             collisionDetection={pointerWithin}
@@ -465,7 +492,10 @@ export default function ManageRankingModal({ rankingId, onClose }) {
                   const raw =
                     manga?.coverThumbUrl ||
                     manga?.sourcescoverUrl ||
-                    it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+                    it.coverUrl ||
+                    it.cover ||
+                    it.thumb ||
+                    it.thumbnail ||
                     "";
                   const coverUrl = resolvedMap[raw] || "";
 

@@ -89,7 +89,6 @@ export default function MangaDetail() {
   const hasNavContext = idsFromRanking && currentIndex != null;
   const hasPrev = hasNavContext && currentIndex > 0;
   const hasNext = hasNavContext && currentIndex < idsFromRanking.length - 1;
- 
 
   const goToIndex = useCallback(
     (nextIndex) => {
@@ -188,8 +187,6 @@ export default function MangaDetail() {
     lite?.sourcescoverUrl ||
     "";
 
-  const description = detail?.description || "Aucune description disponible pour le moment.";
-
   // 🔑 Résolution asynchrone de l'URL d'image (Storage -> HTTPS)
   useEffect(() => {
     let alive = true;
@@ -232,11 +229,23 @@ export default function MangaDetail() {
 
   const notFound = !loading && !lite && !detail;
 
+  /* ---------- Synopsis repliable + card stable ---------- */
+  const [expanded, setExpanded] = useState(false);
+  const WORD_LIMIT = 50;
+
+  const { shownDescription, needsTruncation } = useMemo(() => {
+    const text = (detail?.description || "Aucune description disponible pour le moment.").trim();
+    const words = text.split(/\s+/);
+    const needs = words.length > WORD_LIMIT;
+    const shown = needs ? words.slice(0, WORD_LIMIT).join(" ") + "…" : text;
+    return { shownDescription: shown, needsTruncation: needs };
+  }, [detail?.description]);
+
   return (
     <main className="min-h-screen bg-background text-textc flex">
       <div className="mx-auto w-full max-w-sm flex-1 p-4">
         <section
-          className="relative rounded-2xl bg-background-card shadow border border-borderc p-4"
+          className="relative rounded-2xl bg-background-card shadow border border-borderc p-4 min-h-[620px]"
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
         >
@@ -317,9 +326,38 @@ export default function MangaDetail() {
                 {author && <p className="muted text-sm mt-1">{author}</p>}
               </div>
 
+              {/* Synopsis repliable avec hauteur fixe interne */}
               <div className="mt-4">
                 <h2 className="text-sm font-semibold mb-1">Synopsis</h2>
-                <p className="text-sm text-textc-muted">{description}</p>
+
+                <div
+                  id="synopsis-content"
+                  className={`relative text-sm text-textc-muted ${
+                    expanded ? "max-h-40 overflow-auto pr-1" : "max-h-20 overflow-hidden"
+                  } transition-all`}
+                >
+                  <p>
+                    {expanded
+                      ? (detail?.description || "Aucune description disponible pour le moment.")
+                      : shownDescription}
+                  </p>
+
+                  {!expanded && needsTruncation && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background-card to-transparent" />
+                  )}
+                </div>
+
+                {needsTruncation && (
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((v) => !v)}
+                    className="mt-2 inline-flex items-center text-xs font-medium text-brand hover:underline"
+                    aria-expanded={expanded}
+                    aria-controls="synopsis-content"
+                  >
+                    {expanded ? "Afficher moins" : "Afficher plus"}
+                  </button>
+                )}
               </div>
 
               {/* Indicateur global (optionnel) */}

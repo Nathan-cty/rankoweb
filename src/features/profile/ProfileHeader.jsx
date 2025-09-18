@@ -1,5 +1,5 @@
 // src/features/profile/ProfileHeader.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getAuth, signOut } from "firebase/auth";
 import { useAuth } from "@/features/auth/AuthProvider.jsx";
 import Avatar from "./Avatar.jsx";
@@ -7,24 +7,27 @@ import EditProfileModal from "./EditProfileModal.jsx";
 import { LogOut, Heart } from "lucide-react";
 import { listenUserProfile } from "@/features/profile/profileApi";
 import { useNavigate } from "react-router-dom";
+import ConfirmModal from "@/components/ConfirmModal.jsx";
 
+
+/* ---------- Header profil ---------- */
 export default function ProfileHeader({ onCreateClick }) {
   const auth = getAuth();
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const initialDisplay =
-    user?.displayName || user?.email || "Utilisateur";
+  const initialDisplay = user?.displayName || user?.email || "Utilisateur";
   const initialPhoto =
     user?.photoURL ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(
-      initialDisplay
-    )}&background=4f46e5&color=fff`;
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(initialDisplay)}&background=4f46e5&color=fff`;
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false); // modal édition profil
   const [photo, setPhoto] = useState(initialPhoto);
   const [name, setName] = useState(initialDisplay);
   const [bio, setBio] = useState("");
+
+  const [confirmOpen, setConfirmOpen] = useState(false); // modal confirmation déconnexion
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -41,22 +44,28 @@ export default function ProfileHeader({ onCreateClick }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     try {
+      setSigningOut(true);
       await signOut(auth);
+      // La redirection post-logout est gérée par ton provider d'auth (ou routes guard).
     } catch (err) {
       console.error(err);
+    } finally {
+      setSigningOut(false);
+      setConfirmOpen(false);
     }
-  };
+  }, [auth]);
 
   return (
     <header className="w-full rounded-2xl bg-background-card shadow min-h-[33vh] flex flex-col">
-      {/* Barre supérieure (occupe l’espace, évite tout chevauchement) */}
+      {/* Barre supérieure */}
       <div className="flex items-center justify-between px-3 pt-[env(safe-area-inset-top)] pb-2">
         <button
-          onClick={handleSignOut}
+          onClick={() => setConfirmOpen(true)}
           className="p-2 rounded-full hover:bg-background-soft"
           aria-label="Déconnexion"
+          title="Déconnexion"
         >
           <LogOut size={22} className="text-brand hover:text-brand-light" />
         </button>
@@ -65,6 +74,7 @@ export default function ProfileHeader({ onCreateClick }) {
           onClick={() => navigate("/favorites")}
           className="p-2 rounded-full hover:bg-background-soft"
           aria-label="Favoris"
+          title="Favoris"
         >
           <Heart size={22} className="text-brand hover:text-brand-light" />
         </button>
@@ -122,6 +132,18 @@ export default function ProfileHeader({ onCreateClick }) {
           }}
         />
       )}
+
+      {/* Modal de confirmation de déconnexion */}
+      <ConfirmModal
+  open={confirmOpen}
+  title="Se déconnecter ?"
+  description="Tu es sur le point de te déconnecter de l’application. Tu pourras te reconnecter à tout moment."
+  confirmText={signingOut ? "Déconnexion…" : "Se déconnecter"}
+  cancelText="Annuler"
+  onConfirm={signingOut ? undefined : handleSignOut}
+  onCancel={() => (signingOut ? null : setConfirmOpen(false))}
+/>
+
     </header>
   );
 }
