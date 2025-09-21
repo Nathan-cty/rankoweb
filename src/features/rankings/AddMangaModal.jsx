@@ -4,7 +4,7 @@ import SearchInput from "@/components/SearchInput";
 import { addRankingItems, getRankingItemIds } from "./rankingsApi";
 import { Plus } from "lucide-react";
 import useLockBodyScroll from "@/hooks/useLockBodyScroll";
-import { listMangaPage, searchMangaPrefix } from "@/features/manga/mangaApi";
+import { listMangaPage, searchMangaPrefixPage } from "@/features/manga/mangaApi";
 
 export default function AddMangaModal({ rankingId, initialCount = 0, onClose, onAdded }) {
   useLockBodyScroll(true); // 🔒 bloque le scroll de la page
@@ -15,10 +15,42 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
   const [loadingId, setLoadingId] = useState("");
   const [count, setCount] = useState(initialCount);
 
+  // Résultats cumulés + pagination
   const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [seenIds, setSeenIds] = useState(() => new Set());
+  const [loading, setLoading] = useState(false); // chargement initial / recherche
+  const [isLoadingMore, setIsLoadingMore] = useState(false); // chargement des pages suivantes
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
 
-  // Charger les ids déjà présents (one-shot)
+  // Réf du conteneur scrollable
+  const containerRef = useRef(null);
+
+  // 🗂️ Ref unique qui agrège l'état utile au scroll (évite les closures périmées)
+  const stateRef = useRef({
+    loading: false,
+    isLoadingMore: false,
+    hasMore: false,
+    nextCursor: null,
+    seenIds: new Set(),
+    existingIds: new Set(),
+    query: "",
+  });
+
+  // 🔄 Synchronise la ref unique à chaque changement d'état
+  useEffect(() => {
+    stateRef.current = {
+      loading,
+      isLoadingMore,
+      hasMore,
+      nextCursor,
+      seenIds,
+      existingIds,
+      query,
+    };
+  }, [loading, isLoadingMore, hasMore, nextCursor, seenIds, existingIds, query]);
+
+  // 1) Charger les ids déjà présents (one-shot)
   useEffect(() => {
     (async () => {
       try {
@@ -31,45 +63,121 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
     })();
   }, [rankingId]);
 
-  // Debounce recherche (ne dépend que de query)
-  const timerRef = useRef(null);
+  // 2) Si existingIds change (ajouts externes), retire localement
   useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    setLoading(true);
-    setErr("");
+    if (!results.length) return;
+    setResults((prev) => prev.filter((m) => !existingIds.has(m.id)));
+    setSeenIds((prev) => new Set([...prev].filter((id) => !existingIds.has(id))));
+  }, [existingIds, results.length]);
 
-    timerRef.current = setTimeout(async () => {
+  const PAGE_SIZE = 20;
+
+  // ⚙️ Récupère une page (utilise stateRef pour lire la query fraîche)
+  const fetchPage = async (cursor = null) => {
+    const q = (stateRef.current.query || "").trim();
+    if (!q) {
+      const res = await listMangaPage({ pageSize: PAGE_SIZE, cursor, order: ["titleLower", "asc"] });
+      return { items: res.items || [], next: res.nextCursor || null };
+    } else {
+      const res = await searchMangaPrefixPage(q, { pageSize: PAGE_SIZE, cursor, field: "titleLower" });
+      return { items: res.items || [], next: res.nextCursor || null };
+    }
+  };
+
+  // 3) Debounce recherche (reset + 1ère page à chaque changement de query)
+  const debounceRef = useRef(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setErr("");
+    setLoading(true);
+
+    debounceRef.current = setTimeout(async () => {
       try {
-        let docs = [];
-        const q = query.trim();
-        if (!q) {
-          const { items } = await listMangaPage({ pageSize: 30, order: ["titleLower", "asc"] });
-          docs = items;
-        } else {
-          docs = await searchMangaPrefix(q, { pageSize: 30 });
+        // reset pagination
+        setResults([]);
+        setSeenIds(new Set());
+        setNextCursor(null);
+        setHasMore(false);
+        // remonte en haut
+        if (containerRef.current) containerRef.current.scrollTop = 0;
+
+        const { items, next } = await fetchPage(null);
+        // filtre doublons / existants
+        const filtered = items.filter((m) => m && m.id && !stateRef.current.existingIds.has(m.id));
+        const unique = [];
+        const newSeen = new Set();
+        for (const m of filtered) {
+          if (!newSeen.has(m.id)) {
+            newSeen.add(m.id);
+            unique.push(m);
+          }
         }
-        const filtered = docs.filter((m) => !existingIds.has(m.id));
-        setResults(filtered);
+        setResults(unique);
+        setSeenIds(newSeen);
+        setNextCursor(next);
+        setHasMore(Boolean(next));
       } catch (e) {
         console.error(e);
         setErr("Impossible de charger les mangas.");
         setResults([]);
+        setHasMore(false);
+        setNextCursor(null);
       } finally {
         setLoading(false);
       }
-    }, 350);
+    }, 300);
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
-  // Si existingIds change (ajouts externes), retire localement
+  // Charger la page suivante — lit tout via stateRef
+  const loadMore = async () => {
+    const st = stateRef.current;
+    if (!st.hasMore || st.isLoadingMore) return;
+    try {
+      setIsLoadingMore(true);
+      const { items, next } = await fetchPage(st.nextCursor);
+
+      const filtered = items.filter(
+        (m) => m && m.id && !st.existingIds.has(m.id) && !st.seenIds.has(m.id)
+      );
+
+      if (filtered.length) {
+        setResults((prev) => [...prev, ...filtered]);
+        setSeenIds((prev) => {
+          const s = new Set(prev);
+          for (const m of filtered) s.add(m.id);
+          return s;
+        });
+      }
+      setNextCursor(next);
+      setHasMore(Boolean(next));
+    } catch (e) {
+      console.error(e);
+      setErr("Le chargement supplémentaire a échoué.");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  // 4) Listener de scroll: charge quand on approche du bas (200 px)
   useEffect(() => {
-    if (!results.length) return;
-    setResults((prev) => prev.filter((m) => !existingIds.has(m.id)));
-  }, [existingIds, results.length]);
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      const st = stateRef.current;
+      if (!st.hasMore || st.loading || st.isLoadingMore) return;
+      const threshold = 200;
+      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - threshold;
+      if (nearBottom) loadMore();
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
   // Ajout optimiste
   const addOne = async (mangaId) => {
@@ -101,11 +209,7 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
       role="dialog"
     >
       {/* backdrop */}
-      <button
-        className="absolute inset-0 bg-black/50"
-        onClick={onClose}
-        aria-label="Fermer"
-      />
+      <button className="absolute inset-0 bg-black/50" onClick={onClose} aria-label="Fermer" />
 
       {/* feuille / modale — alignée avec ManageRankingModal */}
       <div
@@ -120,11 +224,7 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
       >
         {/* header */}
         <div className="mb-3 grid grid-cols-[32px_1fr_32px] items-center shrink-0">
-          <button
-            onClick={onClose}
-            className="rounded-full p-2 hover:bg-background-soft justify-self-start"
-            aria-label="Fermer"
-          >
+          <button onClick={onClose} className="rounded-full p-2 hover:bg-background-soft justify-self-start" aria-label="Fermer">
             ✕
           </button>
           <h3 className="text-lg font-semibold text-center">Ajouter des mangas</h3>
@@ -132,32 +232,22 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
         </div>
 
         <div className="shrink-0">
-          <SearchInput
-            value={query}
-            onChange={setQuery}
-            placeholder="Titre ou auteur…"
-            /* si <SearchInput> accepte className, décommente :
-            className="w-full"
-            */
-          />
+          <SearchInput value={query} onChange={setQuery} placeholder="Titre ou auteur…" />
         </div>
 
         {err && (
-          <p className="mt-3 rounded border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300 shrink-0">
-            {err}
-          </p>
+          <p className="mt-3 rounded border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300 shrink-0">{err}</p>
         )}
 
         {/* zone scrollable interne */}
-        <div className="mt-3 flex-1 relative overflow-y-auto overflow-x-hidden overscroll-contain divide-y divide-borderc/40">
-          {loading ? (
-            <div className="h-full grid place-items-center text-sm text-textc-muted">
-              Chargement…
-            </div>
+        <div
+          ref={containerRef}
+          className="mt-3 flex-1 relative overflow-y-auto overflow-x-hidden overscroll-contain divide-y divide-borderc/40"
+        >
+          {loading && results.length === 0 ? (
+            <div className="h-full grid place-items-center text-sm text-textc-muted">Chargement…</div>
           ) : results.length === 0 ? (
-            <div className="h-full grid place-items-center text-sm text-textc-muted">
-              Aucun résultat
-            </div>
+            <div className="h-full grid place-items-center text-sm text-textc-muted">Aucun résultat</div>
           ) : (
             <ul className="w-full">
               {results.map((m) => (
@@ -192,15 +282,28 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
                     {loadingId === m.id ? (
                       <span className="text-xs text-textc-muted">…</span>
                     ) : (
-                      <Plus size={20} className="text-textc-muted hover:text-textc" />
-                    )}
+                      <Plus size={20} className="text-textc-muted hover:text-textc" />)
+                    }
                   </button>
                 </li>
               ))}
             </ul>
           )}
-          {/* espace bas pour éviter que le dernier item ne colle au bord */}
-          <div className="h-2" />
+
+          {/* État bas / actions */}
+          <div className="py-2 text-center">
+            {isLoadingMore && results.length > 0 && (
+              <p className="text-xs text-textc-muted">Chargement supplémentaire…</p>
+            )}
+            {!loading && !hasMore && results.length > 0 && (
+              <p className="text-xs text-textc-muted">— Fin des résultats —</p>
+            )}
+            {hasMore && !isLoadingMore && (
+              <button type="button" onClick={loadMore} className="mt-2 text-sm underline text-textc-muted hover:text-textc">
+                Charger plus
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

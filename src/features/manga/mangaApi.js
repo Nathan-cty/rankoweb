@@ -1,8 +1,18 @@
 // src/features/manga/mangaApi.js
 import { db } from "@/lib/firebase";
 import {
-  collection, doc, getDoc, getDocs, query, orderBy, limit,
-  startAt, endAt, startAfter, where, documentId
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+  startAt,
+  endAt,
+  startAfter,
+  where,
+  documentId,
 } from "firebase/firestore";
 
 // --- utils ---
@@ -23,16 +33,21 @@ export async function getMangaById(id) {
 // =====================
 export async function listManga({ pageSize = 50 } = {}) {
   // Liste simple triée (pour un écran catalogue)
-  const q = query(collection(db, "mangas"), orderBy("titleLower"), limit(pageSize));
-  const snap = await getDocs(q);
+  const qy = query(collection(db, "mangas"), orderBy("titleLower"), limit(pageSize));
+  const snap = await getDocs(qy);
   return snap.docs.map((d) => ({ id: d.id, ...d.data(), _cursor: d })); // _cursor utile si tu pagines après
 }
 
-// Pagination avec curseur (facultatif, pratique pour infinite scroll)
-export async function listMangaPage({ pageSize = 20, cursor = null, order = ["titleLower","asc"] } = {}) {
-  let qBase = query(collection(db, "mangas"), orderBy(order[0], order[1]), limit(pageSize));
+// Pagination avec curseur (pratique pour infinite scroll)
+export async function listMangaPage({
+  pageSize = 20,
+  cursor = null,
+  order = ["titleLower", "asc"],
+} = {}) {
+  const [field, dir] = order;
+  let qBase = query(collection(db, "mangas"), orderBy(field, dir), limit(pageSize));
   if (cursor) {
-    qBase = query(collection(db, "mangas"), orderBy(order[0], order[1]), startAfter(cursor), limit(pageSize));
+    qBase = query(collection(db, "mangas"), orderBy(field, dir), startAfter(cursor), limit(pageSize));
   }
   const snap = await getDocs(qBase);
   const items = snap.docs.map((d) => ({ id: d.id, ...d.data(), _cursor: d }));
@@ -41,7 +56,7 @@ export async function listMangaPage({ pageSize = 20, cursor = null, order = ["ti
 }
 
 // =====================
-// 🔹 RECHERCHE (préfixe)
+// 🔹 RECHERCHE (préfixe) — non paginée (legacy)
 // =====================
 export async function searchMangaPrefix(term, { pageSize = 20 } = {}) {
   const t = fold((term || "").trim());
@@ -69,6 +84,39 @@ export async function searchMangaPrefix(term, { pageSize = 20 } = {}) {
   s2.forEach((d) => map.set(d.id, { id: d.id, ...d.data() }));
 
   return Array.from(map.values()).slice(0, pageSize);
+}
+
+// =====================
+// 🔹 RECHERCHE (préfixe) — paginée (pour infinite scroll)
+//    Utilise un seul champ (titleLower par défaut). Tu peux passer field: "authorLower" si besoin.
+//    Premier appel: startAt(prefix) + endAt(prefix+\uf8ff)
+//    Pages suivantes: startAfter(lastDoc) + endAt(prefix+\uf8ff)
+// =====================
+export async function searchMangaPrefixPage(
+  term,
+  { pageSize = 20, cursor = null, field = "titleLower" } = {}
+) {
+  const t = fold((term || "").trim());
+  if (!t) return { items: [], nextCursor: null };
+
+  const col = collection(db, "mangas");
+  const upper = t + "\uf8ff";
+
+  const constraints = [orderBy(field)];
+  if (cursor) {
+    // Pages suivantes : on continue après le dernier doc renvoyé
+    constraints.push(startAfter(cursor));
+  } else {
+    // Première page : on démarre au début du préfixe
+    constraints.push(startAt(t));
+  }
+  // Toujours borner la fenêtre au préfixe
+  constraints.push(endAt(upper), limit(pageSize));
+
+  const snap = await getDocs(query(col, ...constraints));
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data(), _cursor: d }));
+  const nextCursor = snap.docs.at(-1) || null;
+  return { items, nextCursor };
 }
 
 // =====================

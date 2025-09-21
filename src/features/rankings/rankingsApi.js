@@ -4,6 +4,7 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   getDocs,
   orderBy,
   query,
@@ -11,16 +12,64 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 
+/* ---------------- utils ---------------- */
+const slugify = (s = "") =>
+  s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 60);
+
+const handleify = (s = "") =>
+  slugify(String(s).replace(/@.*/, "")); // "John Doe" → "john-doe" ; email → avant @
+
+async function getCurrentUserHandle() {
+  const user = auth.currentUser;
+  if (!user) return null;
+
+  // 1) essaie dans /users/{uid}
+  try {
+    const uref = doc(db, "users", user.uid);
+    const usnap = await getDoc(uref);
+    if (usnap.exists()) {
+      const u = usnap.data();
+      if (u?.handle) return u.handle;
+      if (u?.username) return u.username;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  // 2) fallback : displayName ou email
+  if (user.displayName) return handleify(user.displayName);
+  if (user.email) return handleify(user.email);
+  return null;
+}
+
+const makeShortId = () => Math.random().toString(36).slice(2, 10);
+
 /**
  * Crée un classement vide pour l'utilisateur connecté.
+ * ➜ Écrit aussi ownerHandle + slug (+ shortid) pour permettre /{username}/{slug}
  */
 export async function createRanking({ title, visibility = "public" }) {
   const user = auth.currentUser;
   if (!user) throw new Error("Utilisateur non authentifié.");
 
+  const ownerHandle = await getCurrentUserHandle();         // 👈 IMPORTANT
+  const cleanTitle = String(title || "").trim();
+  const slug = slugify(cleanTitle || "classement");         // 👈 pour l'URL
+  const shortid = makeShortId();                            // 👈 fallback propre
+
   const ref = await addDoc(collection(db, "rankings"), {
     ownerUid: user.uid,
-    title: String(title || "").trim(),
+    ownerHandle,                // 👈 écrit dans le doc
+    title: cleanTitle,
+    slug,                       // 👈 écrit dans le doc
+    shortid,                    // 👈 utile pour /r/slug-shortid
     visibility,
     itemsCount: 0,
     createdAt: serverTimestamp(),

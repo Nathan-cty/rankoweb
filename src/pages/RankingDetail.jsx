@@ -1,7 +1,15 @@
 // src/pages/RankingDetail.jsx
-import { useParams, Link } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
-import { collection, doc, getDoc, onSnapshot, orderBy, query } from "firebase/firestore";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  writeBatch,
+  updateDoc,
+  deleteDoc,
+} from "firebase/firestore";
 import { db, storage } from "@/lib/firebase";
 import { getMangasByIds } from "@/features/manga/mangaApi";
 import AddMangaModal from "@/features/rankings/AddMangaModal";
@@ -68,65 +76,203 @@ function useResolveStorageUrls(rawList) {
       );
       if (alive) setMap(Object.fromEntries(pairs));
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [rawList]);
   return map;
+}
+
+/* --------------------------- Slug & handle helpers --------------------------- */
+
+const slugify = (s = "") =>
+  s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 60);
+
+// Va chercher un handle depuis /users/{ownerUid}
+// Va chercher le handle courant dans /users/{ownerUid}
+// 👉 priorité: username (nouveau) > handle (ancien) > email/displayName
+async function fetchOwnerHandle(ownerUid) {
+  if (!ownerUid) return null;
+  try {
+    const uref = doc(db, "users", ownerUid);
+    const usnap = await getDoc(uref);
+    if (!usnap.exists()) return null;
+    const u = usnap.data();
+    const fromEmail =
+      (u.email && String(u.email).split("@")[0]) ||
+      (u.displayName && u.displayName) ||
+      null;
+
+    return (
+      (u.username && String(u.username)) ||
+      (u.handle && String(u.handle)) ||
+      fromEmail
+    );
+  } catch {
+    return null;
+  }
+}
+
+
+/* --------------------------- Petits composants --------------------------- */
+
+function KebabIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden {...props}>
+      <circle cx="12" cy="5" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="12" cy="19" r="1.8" />
+    </svg>
+  );
+}
+
+function ModalBase({ title, children, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-borderc bg-background-card p-4 shadow">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <div className="mt-3">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function RenameDialog({ initial, onSubmit, onCancel, loading = false }) {
+  const [val, setVal] = useState(initial || "");
+  useEffect(() => setVal(initial || ""), [initial]);
+  return (
+    <ModalBase title="Renommer le classement" onClose={onCancel}>
+      <label className="text-sm text-textc-muted">Nouveau nom</label>
+      <input
+        autoFocus
+        className="mt-1 w-full rounded border border-borderc bg-background-soft px-3 py-2 outline-none focus:ring-2 focus:ring-primary/30"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder="Mon nouveau classement"
+      />
+      <div className="mt-4 flex justify-end gap-2">
+        <button className="btn-ghost" onClick={onCancel} disabled={loading}>
+          Annuler
+        </button>
+        <button
+          className="btn-brand"
+          onClick={() => onSubmit(val.trim())}
+          disabled={!val.trim() || loading}
+        >
+          {loading ? "Enregistrement…" : "Renommer"}
+        </button>
+      </div>
+    </ModalBase>
+  );
+}
+
+function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel, loading = false }) {
+  return (
+    <ModalBase title={title} onClose={onCancel}>
+      <p className="text-sm text-textc">{message}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        <button className="btn-ghost" onClick={onCancel} disabled={loading}>
+          Annuler
+        </button>
+        <button className="btn-danger" onClick={onConfirm} disabled={loading}>
+          {loading ? "Suppression…" : confirmLabel}
+        </button>
+      </div>
+    </ModalBase>
+  );
 }
 
 /* ------------------------------ Composant ------------------------------ */
 
 export default function RankingDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
 
   const [openAdd, setOpenAdd] = useState(false);
   const [openManage, setOpenManage] = useState(false);
 
   const [title, setTitle] = useState("Mon classement");
-  const [items, setItems] = useState([]);         // items = { id, mangaId, position, ... }
+  const [items] = useState([]); // items = { id, mangaId, position, ... }
   const [mangaDocs, setMangaDocs] = useState([]); // docs /mangas pour affichage
   const [loadingMangas, setLoadingMangas] = useState(false);
 
-  // NEW — états pour la génération de l'URL de partage
+  // États URL de partage
   const [ownerHandle, setOwnerHandle] = useState(null); // ex: "nathan"
-  const [slug, setSlug] = useState("");                 // ex: "top-2025-shonen"
-  const [shortid, setShortid] = useState("");           // ex: "6ie9zq7q" (fallback: id)
+  const [slug, setSlug] = useState(""); // ex: "top-2025-shonen"
+  const [shortid, setShortid] = useState(""); // ex: "6ie9zq7q" (fallback: id)
 
-  // 1) Titre + méta du classement (one-shot)
+  // Kebab menu & modales locales
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [openRename, setOpenRename] = useState(false);
+  const [openConfirmDelete, setOpenConfirmDelete] = useState(false);
+  const [isWorking, setIsWorking] = useState(false);
+  const menuRef = useRef(null);
+
+  // Ferme le menu au clic extérieur / échappe
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const snap = await getDoc(doc(db, "rankings", id));
-        if (mounted && snap.exists()) {
-          const data = snap.data();
-          setTitle(data.title || "Classement");
+    function onDown(e) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(e.target)) setMenuOpen(false);
+    }
+    function onEsc(e) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, []);
 
-          // Renseigne les infos d'URL (avec fallbacks)
-          setOwnerHandle(data.ownerHandle || data.userHandle || null);
-          setSlug(data.slug || "");            // si vide, ShareLinkButton dérivera du title
-          setShortid(data.shortid || id);      // fallback: utilise l'id du doc
+// 1) Titre + méta du classement (one-shot) + sync ownerHandle/slug
+useEffect(() => {
+  let mounted = true;
+  (async () => {
+    try {
+      const ref = doc(db, "rankings", id);
+      const snap = await getDoc(ref);
+      if (!mounted || !snap.exists()) return;
+
+      const data = snap.data();
+
+      // 👇 handle live depuis /users/{ownerUid} (username > handle)
+      const liveHandle = await fetchOwnerHandle(data.ownerUid);
+      const computedHandle = liveHandle || data.ownerHandle || data.userHandle || null;
+
+      const computedSlug = data.slug || slugify(data.title || "");
+
+      // Patch si manquant ou si ça a changé
+      const patch = {};
+      if (computedHandle && data.ownerHandle !== computedHandle) patch.ownerHandle = computedHandle;
+      if (!data.slug) patch.slug = computedSlug;
+      if (Object.keys(patch).length) {
+        try {
+          await updateDoc(ref, patch);
+        } catch (e) {
+          console.warn("Patch ownerHandle/slug failed (non-blocking):", e);
         }
-      } catch (e) {
-        console.error(e);
       }
-    })();
-    return () => { mounted = false; };
-  }, [id]);
 
-  // 2) Items en temps réel (triés par position)
-  useEffect(() => {
-    if (!id) return;
-    const qy = query(collection(db, "rankings", id, "items"), orderBy("position", "asc"));
-    const unsub = onSnapshot(
-      qy,
-      (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setItems(list);
-      },
-      (err) => console.error("Items listener error:", err)
-    );
-    return () => unsub();
-  }, [id]);
+      setTitle(data.title || "Classement");
+      setOwnerHandle(computedHandle || null); // ← on met le handle LIVE dans l’état
+      setSlug(computedSlug);
+      setShortid(data.shortid || id);
+    } catch (e) {
+      console.error(e);
+    }
+  })();
+  return () => { mounted = false; };
+}, [id]);
+
 
   // Liste ordonnée des IDs de mangas (pour navigation depuis la fiche)
   const orderedMangaIds = useMemo(
@@ -137,7 +283,10 @@ export default function RankingDetail() {
   // 3) À chaque changement d’items → récupérer les docs /mangas correspondants
   useEffect(() => {
     const ids = orderedMangaIds;
-    if (ids.length === 0) { setMangaDocs([]); return; }
+    if (ids.length === 0) {
+      setMangaDocs([]);
+      return;
+    }
     setLoadingMangas(true);
     (async () => {
       try {
@@ -198,7 +347,10 @@ export default function RankingDetail() {
       const raw =
         m?.coverThumbUrl ||
         m?.sourcescoverUrl ||
-        it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+        it.coverUrl ||
+        it.cover ||
+        it.thumb ||
+        it.thumbnail ||
         "";
       if (raw) list.push(raw);
     }
@@ -212,14 +364,110 @@ export default function RankingDetail() {
   const rankingTopRaw = topManga?.coverThumbUrl || topManga?.sourcescoverUrl || "";
   const rankingCover = resolved[rankingTopRaw] || "";
 
+  /* -------------------------- Actions classement ------------------------- */
+
+  async function handleRename(newName) {
+    const val = (newName || "").trim();
+    if (!val || val === title) {
+      setOpenRename(false);
+      return;
+    }
+    try {
+      setIsWorking(true);
+      const ref = doc(db, "rankings", id);
+      const newSlug = slugify(val); // si tu veux un slug stable, enlève cette ligne et le champ slug ci-dessous
+      await updateDoc(ref, { title: val, slug: newSlug });
+      setTitle(val);
+      setSlug(newSlug);
+      setOpenRename(false);
+    } catch (e) {
+      console.error(e);
+      alert("Impossible de renommer le classement pour le moment.");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  async function handleDeleteRanking() {
+    try {
+      setIsWorking(true);
+      // Supprime les items en lots (limite 500 opérations / batch)
+      const itemsCol = collection(db, "rankings", id, "items");
+      const snap = await getDocs(itemsCol);
+      const docsArr = snap.docs;
+      const CHUNK = 400; // marge de sécurité
+      for (let i = 0; i < docsArr.length; i += CHUNK) {
+        const batch = writeBatch(db);
+        for (const d of docsArr.slice(i, i + CHUNK)) batch.delete(d.ref);
+        await batch.commit();
+      }
+      // Puis supprime le doc classement
+      await deleteDoc(doc(db, "rankings", id));
+      setOpenConfirmDelete(false);
+      // Redirige vers la page précédente (ou /)
+      try {
+        navigate(-1);
+      } catch {
+        navigate("/");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("La suppression a échoué. Réessayez plus tard.");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
   /* ------------------------------ Rendu ------------------------------ */
 
   return (
     <main className="min-h-screen bg-background text-textc flex">
       <div className="mx-auto w-full max-w-sm flex-1 p-4">
         <section className="relative rounded-2xl bg-background-card shadow border border-borderc p-4 flex flex-col">
-          <div className="mb-2">
+          {/* Header: Back à gauche + menu à droite */}
+          <div className="mb-2 flex items-center justify-between">
             <BackButton />
+
+            <div className="relative" ref={menuRef}>
+              <button
+                aria-label="Plus d'options"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((v) => !v)}
+                className="p-2 rounded-full hover:bg-background-soft focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <KebabIcon className="fill-current" />
+              </button>
+
+              {menuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border border-borderc bg-background-card shadow z-20"
+                >
+                  <button
+                    role="menuitem"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-background-soft"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setOpenRename(true);
+                    }}
+                  >
+                    Renommer le classement
+                  </button>
+                  <div className="h-px bg-borderc" />
+                  <button
+                    role="menuitem"
+                    className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50/10 hover:text-red-600"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setOpenConfirmDelete(true);
+                    }}
+                  >
+                    Supprimer le classement
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Image du classement (optionnelle) */}
@@ -247,7 +495,7 @@ export default function RankingDetail() {
             <p className="muted text-sm mt-1">{items.length} manga(s)</p>
           </div>
 
-          {/* Actions */}
+          {/* Actions principales */}
           <div className="mt-6 flex justify-center gap-3">
             <button className="btn-brand" onClick={() => setOpenAdd(true)}>
               Ajouter
@@ -257,9 +505,9 @@ export default function RankingDetail() {
             </button>
             <ShareLinkButton
               title={title}
-              ownerHandle={ownerHandle}  // récupéré depuis Firestore
-              slug={slug}                // peut être vide, fallback dans le composant
-              shortid={shortid}          // fallback: id
+              ownerHandle={ownerHandle}  // pour /{username}/{slug}
+              slug={slug}                // peut être vide (dérivé du title dans le bouton)
+              shortid={shortid}          // fallback: id court
               id={id}
               className="text-primary hover:bg-primary/10 focus:ring-primary/30"
             >
@@ -274,15 +522,13 @@ export default function RankingDetail() {
                 Aucun manga dans ce classement.
               </div>
             ) : loadingMangas && mangaDocs.length === 0 ? (
-              <div className="text-center text-sm text-textc-muted py-8">
-                Chargement…
-              </div>
+              <div className="text-center text-sm text-textc-muted py-8">Chargement…</div>
             ) : (
               <>
                 <ul className="space-y-3">
                   {visibleItems.map((it, idx) => {
                     const mid = it.mangaId ?? it.id; // identifiant du manga
-                    const m = mangaById.get(mid);     // doc depuis /mangas
+                    const m = mangaById.get(mid); // doc depuis /mangas
                     const mangaTitle = m?.title || it.title || mid;
                     const author = m?.author || it.author || "";
 
@@ -290,7 +536,10 @@ export default function RankingDetail() {
                     const raw =
                       m?.coverThumbUrl ||
                       m?.sourcescoverUrl ||
-                      it.coverUrl || it.cover || it.thumb || it.thumbnail ||
+                      it.coverUrl ||
+                      it.cover ||
+                      it.thumb ||
+                      it.thumbnail ||
                       "";
                     const cover = resolved[raw] || "";
 
@@ -366,7 +615,7 @@ export default function RankingDetail() {
         </section>
       </div>
 
-      {/* Modales */}
+      {/* Modales existantes */}
       {openAdd && (
         <AddMangaModal
           rankingId={id}
@@ -375,10 +624,26 @@ export default function RankingDetail() {
         />
       )}
 
-      {openManage && (
-        <ManageRankingModal
-          rankingId={id}
-          onClose={() => setOpenManage(false)}
+      {openManage && <ManageRankingModal rankingId={id} onClose={() => setOpenManage(false)} />}
+
+      {/* Modales locales : Renommer / Supprimer */}
+      {openRename && (
+        <RenameDialog
+          initial={title}
+          loading={isWorking}
+          onSubmit={handleRename}
+          onCancel={() => setOpenRename(false)}
+        />
+      )}
+
+      {openConfirmDelete && (
+        <ConfirmDialog
+          title="Supprimer le classement ?"
+          message="Cette action est définitive et supprimera aussi les éléments du classement."
+          confirmLabel="Supprimer"
+          onConfirm={handleDeleteRanking}
+          onCancel={() => setOpenConfirmDelete(false)}
+          loading={isWorking}
         />
       )}
     </main>

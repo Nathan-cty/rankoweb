@@ -13,6 +13,7 @@ import AnonOnly from "@/features/auth/AnonOnly.jsx";
 import MangaDetail from "@/pages/MangaDetails";
 import Favorites from "@/pages/Favorites.jsx";
 import ImportMangas from "../pages/admin/ImportMangas";
+import RankingResolver from "@/pages/RankingResolver.jsx";
 
 export default function App() {
   return (
@@ -74,6 +75,10 @@ export default function App() {
     </ProtectedRoute>
   }
 />
+
+{/* URL jolies */}
++     <Route path="/:username/:slug" element={<RankingResolver />} />
++     <Route path="/r/:slugShort" element={<RankingResolver />} />
       
 
       {/* Pages protégées (connexion requise) */}
