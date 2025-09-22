@@ -9,6 +9,9 @@ import {
   writeBatch,
   updateDoc,
   deleteDoc,
+  onSnapshot,
+  orderBy,
+  query,
 } from "firebase/firestore";
 import { db, storage } from "@/lib/firebase";
 import { getMangasByIds } from "@/features/manga/mangaApi";
@@ -16,6 +19,10 @@ import AddMangaModal from "@/features/rankings/AddMangaModal";
 import BackButton from "@/components/BackButton";
 import ManageRankingModal from "@/features/rankings/ManageRankingModal";
 import ShareLinkButton from "@/components/ShareLinkButton";
+
+// ✅ import auth pour connaître l’utilisateur courant
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 // Infinite slice (réutilisable partout)
 import { useInfiniteSlice } from "@/hooks/useInfiniteSlice";
@@ -196,11 +203,23 @@ export default function RankingDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
 
+  // ✅ état pour l’utilisateur courant et l’ownerUid du classement
+  const [currentUid, setCurrentUid] = useState(null);
+  const [ownerUid, setOwnerUid] = useState(null);
+
+  // Abonnement auth (ne change PAS la logique de lien)
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setCurrentUid(user?.uid || null);
+    });
+    return () => unsub();
+  }, []);
+
   const [openAdd, setOpenAdd] = useState(false);
   const [openManage, setOpenManage] = useState(false);
 
   const [title, setTitle] = useState("Mon classement");
-  const [items] = useState([]); // items = { id, mangaId, position, ... }
+  const [items, setItems] = useState([]); // items = { id, mangaId, position, ... }
   const [mangaDocs, setMangaDocs] = useState([]); // docs /mangas pour affichage
   const [loadingMangas, setLoadingMangas] = useState(false);
 
@@ -244,6 +263,9 @@ useEffect(() => {
 
       const data = snap.data();
 
+      // ✅ on récupère aussi ownerUid (pour savoir si l'utilisateur est propriétaire)
+      setOwnerUid(data.ownerUid || null);
+
       // 👇 handle live depuis /users/{ownerUid} (username > handle)
       const liveHandle = await fetchOwnerHandle(data.ownerUid);
       const computedHandle = liveHandle || data.ownerHandle || data.userHandle || null;
@@ -273,6 +295,28 @@ useEffect(() => {
   return () => { mounted = false; };
 }, [id]);
 
+// 2) Items en temps réel (triés par position)
+useEffect(() => {
+  if (!id) return;
+  const qy = query(
+    collection(db, "rankings", id, "items"),
+    orderBy("position", "asc")
+  );
+  const unsub = onSnapshot(
+    qy,
+    (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setItems(list);
+    },
+    (err) => console.error("Items listener error:", err)
+  );
+  return () => unsub();
+}, [id]);
+
+
+
+  // ✅ calcul propriétaire (n’impacte pas la logique des liens)
+  const isOwner = !!currentUid && !!ownerUid && currentUid === ownerUid;
 
   // Liste ordonnée des IDs de mangas (pour navigation depuis la fiche)
   const orderedMangaIds = useMemo(
@@ -426,48 +470,51 @@ useEffect(() => {
         <section className="relative rounded-2xl bg-background-card shadow border border-borderc p-4 flex flex-col">
           {/* Header: Back à gauche + menu à droite */}
           <div className="mb-2 flex items-center justify-between">
-            <BackButton />
+            <BackButton unauthTo="/dashboard" fallback="/dashboard" />
 
-            <div className="relative" ref={menuRef}>
-              <button
-                aria-label="Plus d'options"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                onClick={() => setMenuOpen((v) => !v)}
-                className="p-2 rounded-full hover:bg-background-soft focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <KebabIcon className="fill-current" />
-              </button>
-
-              {menuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border border-borderc bg-background-card shadow z-20"
+            {/* ✅ menu visible uniquement pour le propriétaire */}
+            {isOwner && (
+              <div className="relative" ref={menuRef}>
+                <button
+                  aria-label="Plus d'options"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="p-2 rounded-full hover:bg-background-soft focus:outline-none focus:ring-2 focus:ring-primary/30"
                 >
-                  <button
-                    role="menuitem"
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-background-soft"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setOpenRename(true);
-                    }}
+                  <KebabIcon className="fill-current" />
+                </button>
+
+                {menuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border border-borderc bg-background-card shadow z-20"
                   >
-                    Renommer le classement
-                  </button>
-                  <div className="h-px bg-borderc" />
-                  <button
-                    role="menuitem"
-                    className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50/10 hover:text-red-600"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setOpenConfirmDelete(true);
-                    }}
-                  >
-                    Supprimer le classement
-                  </button>
-                </div>
-              )}
-            </div>
+                    <button
+                      role="menuitem"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-background-soft"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setOpenRename(true);
+                      }}
+                    >
+                      Renommer le classement
+                    </button>
+                    <div className="h-px bg-borderc" />
+                    <button
+                      role="menuitem"
+                      className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50/10 hover:text-red-600"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setOpenConfirmDelete(true);
+                      }}
+                    >
+                      Supprimer le classement
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Image du classement (optionnelle) */}
@@ -497,12 +544,17 @@ useEffect(() => {
 
           {/* Actions principales */}
           <div className="mt-6 flex justify-center gap-3">
-            <button className="btn-brand" onClick={() => setOpenAdd(true)}>
-              Ajouter
-            </button>
-            <button className="btn-ghost" onClick={() => setOpenManage(true)}>
-              Modifier
-            </button>
+            {/* ✅ boutons visibles uniquement pour le propriétaire */}
+            {isOwner && (
+              <>
+                <button className="btn-brand" onClick={() => setOpenAdd(true)}>
+                  Ajouter
+                </button>
+                <button className="btn-ghost" onClick={() => setOpenManage(true)}>
+                  Modifier
+                </button>
+              </>
+            )}
             <ShareLinkButton
               title={title}
               ownerHandle={ownerHandle}  // pour /{username}/{slug}
@@ -615,8 +667,8 @@ useEffect(() => {
         </section>
       </div>
 
-      {/* Modales existantes */}
-      {openAdd && (
+      {/* Modales existantes — montées seulement si propriétaire */}
+      {isOwner && openAdd && (
         <AddMangaModal
           rankingId={id}
           existingIds={items.map((it) => it.mangaId ?? it.id)}
@@ -624,10 +676,12 @@ useEffect(() => {
         />
       )}
 
-      {openManage && <ManageRankingModal rankingId={id} onClose={() => setOpenManage(false)} />}
+      {isOwner && openManage && (
+        <ManageRankingModal rankingId={id} onClose={() => setOpenManage(false)} />
+      )}
 
-      {/* Modales locales : Renommer / Supprimer */}
-      {openRename && (
+      {/* Modales locales : Renommer / Supprimer — seulement si propriétaire */}
+      {isOwner && openRename && (
         <RenameDialog
           initial={title}
           loading={isWorking}
@@ -636,7 +690,7 @@ useEffect(() => {
         />
       )}
 
-      {openConfirmDelete && (
+      {isOwner && openConfirmDelete && (
         <ConfirmDialog
           title="Supprimer le classement ?"
           message="Cette action est définitive et supprimera aussi les éléments du classement."

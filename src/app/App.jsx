@@ -76,10 +76,9 @@ export default function App() {
   }
 />
 
-{/* URL jolies */}
-+     <Route path="/:username/:slug" element={<RankingResolver />} />
-+     <Route path="/r/:slugShort" element={<RankingResolver />} />
-      
+<Route path="/:username/:slug" element={<RankingResolver />} />
+<Route path="/r/:slugShort" element={<RankingResolver />} />
+
 
       {/* Pages protégées (connexion requise) */}
       <Route
