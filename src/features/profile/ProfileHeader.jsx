@@ -9,6 +9,8 @@ import { listenUserProfile } from "@/features/profile/profileApi";
 import { useNavigate } from "react-router-dom";
 import ConfirmModal from "@/components/ConfirmModal.jsx";
 
+// ⬇️ importe ton logo (adapte le chemin/format si besoin)
+import logoUrl from "@/assets/logo-ranko.png";
 
 /* ---------- Header profil ---------- */
 export default function ProfileHeader({ onCreateClick }) {
@@ -48,7 +50,7 @@ export default function ProfileHeader({ onCreateClick }) {
     try {
       setSigningOut(true);
       await signOut(auth);
-      // La redirection post-logout est gérée par ton provider d'auth (ou routes guard).
+      // Redirection post-logout gérée par le guard si besoin
     } catch (err) {
       console.error(err);
     } finally {
@@ -59,20 +61,32 @@ export default function ProfileHeader({ onCreateClick }) {
 
   return (
     <header className="w-full rounded-2xl bg-background-card shadow min-h-[33vh] flex flex-col">
-      {/* Barre supérieure */}
-      <div className="flex items-center justify-between px-3 pt-[env(safe-area-inset-top)] pb-2">
+      {/* Barre supérieure : icône logout / LOGO / icône favoris */}
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-3 pt-[env(safe-area-inset-top)] pb-2">
         <button
           onClick={() => setConfirmOpen(true)}
-          className="p-2 rounded-full hover:bg-background-soft"
+          className="p-2 rounded-full hover:bg-background-soft justify-self-start"
           aria-label="Déconnexion"
           title="Déconnexion"
         >
           <LogOut size={22} className="text-brand hover:text-brand-light" />
         </button>
 
+        {/* LOGO centré */}
+        <div className="justify-self-center">
+          <img
+            src={logoUrl}
+            alt="Rankõ"
+            className="block h-6 w-auto sm:h-18 md:h-20 select-none"
+            loading="eager"
+            decoding="async"
+            draggable={false}
+          />
+        </div>
+
         <button
           onClick={() => navigate("/favorites")}
-          className="p-2 rounded-full hover:bg-background-soft"
+          className="p-2 rounded-full hover:bg-background-soft justify-self-end"
           aria-label="Favoris"
           title="Favoris"
         >
@@ -135,15 +149,14 @@ export default function ProfileHeader({ onCreateClick }) {
 
       {/* Modal de confirmation de déconnexion */}
       <ConfirmModal
-  open={confirmOpen}
-  title="Se déconnecter ?"
-  description="Tu es sur le point de te déconnecter de l’application. Tu pourras te reconnecter à tout moment."
-  confirmText={signingOut ? "Déconnexion…" : "Se déconnecter"}
-  cancelText="Annuler"
-  onConfirm={signingOut ? undefined : handleSignOut}
-  onCancel={() => (signingOut ? null : setConfirmOpen(false))}
-/>
-
+        open={confirmOpen}
+        title="Se déconnecter ?"
+        description="Tu es sur le point de te déconnecter de l’application. Tu pourras te reconnecter à tout moment."
+        confirmText={signingOut ? "Déconnexion…" : "Se déconnecter"}
+        cancelText="Annuler"
+        onConfirm={signingOut ? undefined : handleSignOut}
+        onCancel={() => (signingOut ? null : setConfirmOpen(false))}
+      />
     </header>
   );
 }

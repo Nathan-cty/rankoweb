@@ -4,6 +4,21 @@ import { useNavigate, Link } from "react-router-dom";
 import { signInEmail, signInWithGoogle } from "@/lib/auth";
 import GoogleButton from "@/components/GoogleButton.jsx";
 
+import logoUrl from "@/assets/logo-ranko.png";
+
+function LogoSpot({ src = logoUrl, alt = "Rankõ" }) {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="block mx-auto h-16 w-auto sm:h-20 md:h-24"
+      loading="eager"
+      decoding="async"
+      draggable={false}
+    />
+  );
+}
+
 export default function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,7 +40,7 @@ export default function SignIn() {
   return (
     <main className="min-h-screen grid place-items-center bg-background p-6 text-textc">
       <div className="w-full max-w-md rounded-2xl bg-background-card p-6 shadow border border-borderc">
-        <h1 className="mb-4 text-2xl font-bold text-center text-brand">Connexion</h1>
+    <LogoSpot to="/" />
 
         {err && (
           <div className="mb-3 rounded border border-red-500/30 bg-red-500/10 p-2 text-red-400 text-sm">
