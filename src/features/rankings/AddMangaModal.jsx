@@ -5,9 +5,11 @@ import { addRankingItems, getRankingItemIds } from "./rankingsApi";
 import { Plus } from "lucide-react";
 import useLockBodyScroll from "@/hooks/useLockBodyScroll";
 import { listMangaPage, searchMangaPrefixPage } from "@/features/manga/mangaApi";
+import { useNavigate } from "react-router-dom";
 
 export default function AddMangaModal({ rankingId, initialCount = 0, onClose, onAdded }) {
   useLockBodyScroll(true); // 🔒 bloque le scroll de la page
+  const navigate = useNavigate();
 
   const [query, setQuery] = useState("");
   const [existingIds, setExistingIds] = useState(new Set());
@@ -202,6 +204,21 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
     }
   };
 
+  // 👉 Navigation vers la page détail (ferme la modale avant)
+  const goToDetails = (id) => {
+    if (!id) return;
+    onClose?.();
+    navigate(`/manga/${id}`);
+  };
+
+  // Accessibilité clavier pour la carte
+  const onCardKeyDown = (e, id) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      goToDetails(id);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-end sm:place-items-center overflow-hidden overscroll-contain"
@@ -251,7 +268,15 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
           ) : (
             <ul className="w-full">
               {results.map((m) => (
-                <li key={m.id} className="py-2 flex items-center gap-3">
+                <li
+                  key={m.id}
+                  className="py-2 flex items-center gap-3 cursor-pointer hover:bg-background-soft/60 focus-within:bg-background-soft/60"
+                  onClick={() => goToDetails(m.id)}
+                  onKeyDown={(e) => onCardKeyDown(e, m.id)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Voir les détails de ${m.title}`}
+                >
                   <div className="h-10 w-10 rounded bg-background-soft border border-borderc overflow-hidden grid place-items-center text-[10px] text-textc-muted shrink-0">
                     {m.coverThumbUrl ? (
                       <img
@@ -273,17 +298,20 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
                   </div>
 
                   <button
-                    onClick={() => addOne(m.id)}
+                    onClick={(e) => {
+                      e.stopPropagation(); // ⛔ Empêche d'ouvrir la page détail
+                      addOne(m.id);
+                    }}
                     disabled={loadingId === m.id}
-                    className="p-2 hover:bg-background-soft disabled:opacity-50 shrink-0"
+                    className="p-2 hover:bg-background-soft disabled:opacity-50 shrink-0 rounded"
                     title="Ajouter"
                     aria-label={`Ajouter ${m.title}`}
                   >
                     {loadingId === m.id ? (
                       <span className="text-xs text-textc-muted">…</span>
                     ) : (
-                      <Plus size={20} className="text-textc-muted hover:text-textc" />)
-                    }
+                      <Plus size={20} className="text-textc-muted hover:text-textc" />
+                    )}
                   </button>
                 </li>
               ))}
