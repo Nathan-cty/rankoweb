@@ -547,7 +547,7 @@ useEffect(() => {
             {/* ✅ boutons visibles uniquement pour le propriétaire */}
             {isOwner && (
               <>
-                <button className="btn-brand" onClick={() => setOpenAdd(true)}>
+                <button className="btn-brand" onClick={() => navigate("add", { relative: "path" })}>
                   Ajouter
                 </button>
                 <button className="btn-ghost" onClick={() => setOpenManage(true)}>

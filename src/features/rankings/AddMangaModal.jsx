@@ -11,6 +11,20 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
   useLockBodyScroll(true); // 🔒 bloque le scroll de la page
   const navigate = useNavigate();
 
+  // 🔔 Toast de confirmation
+  const [toast, setToast] = useState("");
+  const toastTimerRef = useRef(null);
+  const showToast = (msg) => {
+    setToast(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(""), 2000);
+  };
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
   const [query, setQuery] = useState("");
   const [existingIds, setExistingIds] = useState(new Set());
   const [err, setErr] = useState("");
@@ -195,6 +209,10 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
       setExistingIds((prev) => new Set(prev).add(mangaId));
       setCount((c) => c + 1);
       onAdded?.({ added: 1, newTotal: count + 1 });
+
+      // ✅ Toast de confirmation
+      const title = backup?.title || "Manga";
+      showToast(`« ${title} » ajouté au classement`);
     } catch (e) {
       console.error(e);
       setErr("Impossible d’ajouter ce manga.");
@@ -204,11 +222,10 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
     }
   };
 
-  // 👉 Navigation vers la page détail (ferme la modale avant)
+  // Navigation vers la page détail (ne ferme plus la modale)
   const goToDetails = (id) => {
     if (!id) return;
-    onClose?.();
-    navigate(`/manga/${id}`);
+    navigate(`/rankings/${rankingId}/add/manga/${id}`);
   };
 
   // Accessibilité clavier pour la carte
@@ -334,6 +351,19 @@ export default function AddMangaModal({ rankingId, initialCount = 0, onClose, on
           </div>
         </div>
       </div>
+
+      {/* 🔔 Toast de confirmation */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[70]"
+        >
+          <div className="rounded-xl border border-emerald-400/30 bg-emerald-600 text-white px-3 py-2 shadow-lg text-sm">
+            {toast}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
